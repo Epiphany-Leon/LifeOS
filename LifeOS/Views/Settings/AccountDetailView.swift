@@ -23,6 +23,8 @@ struct AccountDetailView: View {
 	@State private var savedBudget = false
 	@State private var savedToken = false
 	private let formLabelWidth: CGFloat = 72
+	private let trailingContentWidth: CGFloat = 360
+	private let trailingEdgePadding: CGFloat = 12
 
 	private var avatarImage: NSImage? {
 		guard !appState.avatarImagePath.isEmpty else { return nil }
@@ -69,7 +71,9 @@ struct AccountDetailView: View {
 						.frame(width: 72, height: 72)
 						.clipShape(Circle())
 
-						VStack(alignment: .leading, spacing: 8) {
+						Spacer(minLength: 12)
+
+						VStack(alignment: .trailing, spacing: 8) {
 							Button("修改头像并裁剪…") {
 								selectAndCropAvatar()
 							}
@@ -82,64 +86,61 @@ struct AccountDetailView: View {
 							}
 						}
 					}
+					.padding(.trailing, trailingEdgePadding)
 
-					HStack(alignment: .center, spacing: 12) {
-						Text("昵称")
-							.frame(width: formLabelWidth, alignment: .leading)
-						TextField("", text: $draftUserName)
-							.textFieldStyle(.roundedBorder)
-							.frame(width: 260)
-						Button("保存") {
-							appState.userName = draftUserName.trimmingCharacters(in: .whitespacesAndNewlines)
-							showSavedFlag($savedProfile)
+					rightAlignedRow(label: "昵称") {
+						HStack(spacing: 8) {
+							TextField("", text: $draftUserName)
+								.textFieldStyle(.roundedBorder)
+								.frame(width: 180)
+							Button("保存") {
+								appState.userName = draftUserName.trimmingCharacters(in: .whitespacesAndNewlines)
+								showSavedFlag($savedProfile)
+							}
+							.buttonStyle(.borderedProminent)
+							.controlSize(.small)
+							if savedProfile {
+								Image(systemName: "checkmark.circle.fill")
+									.foregroundStyle(.green)
+							}
 						}
-						.buttonStyle(.borderedProminent)
-						.controlSize(.small)
-						if savedProfile {
-							Image(systemName: "checkmark.circle.fill")
-								.foregroundStyle(.green)
-						}
-						Spacer(minLength: 0)
 					}
-					.frame(maxWidth: .infinity, alignment: .leading)
 				}
 
 				Section("偏好") {
-					LabeledContent("全局货币") {
+					rightAlignedRow(label: "全局货币") {
 						Picker("全局货币", selection: $appState.globalCurrency) {
 							ForEach(CurrencyCode.allCases) { code in
 								Text(code.displayName).tag(code.rawValue)
 							}
 						}
 						.labelsHidden()
-						.frame(width: 180)
+						.frame(width: 220)
 					}
 
-					HStack(alignment: .center, spacing: 12) {
-						Text("月度预算")
-							.frame(width: formLabelWidth, alignment: .leading)
-						TextField("", text: $draftBudgetText)
-							.textFieldStyle(.roundedBorder)
-							.frame(width: 180)
-						Button("保存") {
-							let parsed = Double(draftBudgetText) ?? 0
-							appState.monthlyBudget = max(0, parsed)
-							draftBudgetText = String(format: "%.2f", appState.monthlyBudget)
-							showSavedFlag($savedBudget)
+					rightAlignedRow(label: "月度预算") {
+						HStack(spacing: 8) {
+							TextField("", text: $draftBudgetText)
+								.textFieldStyle(.roundedBorder)
+								.frame(width: 140)
+							Button("保存") {
+								let parsed = Double(draftBudgetText) ?? 0
+								appState.monthlyBudget = max(0, parsed)
+								draftBudgetText = String(format: "%.2f", appState.monthlyBudget)
+								showSavedFlag($savedBudget)
+							}
+							.buttonStyle(.borderedProminent)
+							.controlSize(.small)
+							if savedBudget {
+								Image(systemName: "checkmark.circle.fill")
+									.foregroundStyle(.green)
+							}
 						}
-						.buttonStyle(.borderedProminent)
-						.controlSize(.small)
-						if savedBudget {
-							Image(systemName: "checkmark.circle.fill")
-								.foregroundStyle(.green)
-						}
-						Spacer(minLength: 0)
 					}
-					.frame(maxWidth: .infinity, alignment: .leading)
 				}
 
 				Section("API Token") {
-					LabeledContent("保存位置") {
+					rightAlignedRow(label: "保存位置") {
 						Picker("保存位置", selection: $appState.apiTokenStorageMode) {
 							ForEach(APITokenStorageMode.allCases) { mode in
 								Text(mode.label).tag(mode.rawValue)
@@ -153,12 +154,12 @@ struct AccountDetailView: View {
 					}
 
 					if appState.selectedAPITokenStorageMode == .localFile {
-						LabeledContent("本地文件") {
+						rightAlignedRow(label: "本地文件") {
 							HStack(spacing: 8) {
 								Text(AICredentialStore.localFileURL().path)
 									.foregroundStyle(.secondary)
 									.truncationMode(.middle)
-									.frame(width: 260, alignment: .leading)
+									.frame(width: 220, alignment: .trailing)
 								Button("选择文件…") {
 									selectTokenFile()
 								}
@@ -168,7 +169,7 @@ struct AccountDetailView: View {
 						}
 					}
 
-					LabeledContent("已保存 Token") {
+					rightAlignedRow(label: "已保存 Token") {
 						HStack(spacing: 8) {
 							if showTokenValue && !savedApiKey.isEmpty {
 								Button(savedApiKey) {
@@ -177,6 +178,8 @@ struct AccountDetailView: View {
 								.buttonStyle(.plain)
 								.help("点击复制到剪贴板")
 								.textSelection(.enabled)
+								.lineLimit(1)
+								.truncationMode(.middle)
 							} else {
 								Text(tokenDisplayText)
 									.foregroundStyle(savedApiKey.isEmpty ? .secondary : .primary)
@@ -195,50 +198,57 @@ struct AccountDetailView: View {
 						}
 					}
 
-					LabeledContent("更新 Token") {
+					rightAlignedRow(label: "更新 Token") {
 						SecureField("sk-...", text: $apiKeyInput)
+							.textFieldStyle(.roundedBorder)
 							.frame(width: 260)
 					}
 
-					HStack(spacing: 10) {
-						Button("保存 API Key") {
-							AICredentialStore.saveAPIKey(apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines))
-							savedApiKey = AICredentialStore.readAPIKey()
-							showSavedFlag($savedToken)
-						}
-						.buttonStyle(.borderedProminent)
-						.disabled(apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+					rightAlignedRow(label: "") {
+						HStack(spacing: 10) {
+							Button("保存 API Key") {
+								AICredentialStore.saveAPIKey(apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines))
+								savedApiKey = AICredentialStore.readAPIKey()
+								showSavedFlag($savedToken)
+							}
+							.buttonStyle(.borderedProminent)
+							.disabled(apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-						if savedToken {
-							Label("已保存", systemImage: "checkmark.circle.fill")
-								.font(.subheadline)
-								.foregroundStyle(.green)
+							if savedToken {
+								Label("已保存", systemImage: "checkmark.circle.fill")
+									.font(.subheadline)
+									.foregroundStyle(.green)
+							}
 						}
 					}
 
-					LabeledContent("实际保存地") {
+					rightAlignedRow(label: "实际保存地") {
 						Text(AICredentialStore.storageLocationDescription())
 							.foregroundStyle(.secondary)
 							.truncationMode(.middle)
-							.frame(width: 300, alignment: .leading)
+							.frame(width: 300, alignment: .trailing)
 					}
 				}
 
 				Section("数据存储") {
-					LabeledContent("数据目录") {
+					rightAlignedRow(label: "数据目录") {
 						Text(appState.storageDirectory?.path ?? "默认路径")
 							.foregroundStyle(.secondary)
 							.truncationMode(.middle)
-							.frame(width: 300, alignment: .leading)
+							.frame(width: 300, alignment: .trailing)
 					}
-					Button("更改存储文件夹…") {
-						selectDataFolder()
+
+					rightAlignedRow(label: "") {
+						Button("更改存储文件夹…") {
+							selectDataFolder()
+						}
+						.buttonStyle(.bordered)
 					}
 				}
 			}
 			.formStyle(.grouped)
 		}
-		.frame(width: 720, height: 620)
+		.frame(width: 640, height: 620)
 		.onAppear {
 			draftUserName = appState.userName
 			draftBudgetText = String(format: "%.2f", appState.monthlyBudget)
@@ -246,6 +256,20 @@ struct AccountDetailView: View {
 			savedApiKey = key
 			apiKeyInput = key
 		}
+	}
+
+	private func rightAlignedRow<Content: View>(
+		label: String,
+		@ViewBuilder content: () -> Content
+	) -> some View {
+		HStack(alignment: .center, spacing: 12) {
+			Text(label)
+				.frame(width: formLabelWidth, alignment: .leading)
+			Spacer(minLength: 12)
+			content()
+				.frame(maxWidth: trailingContentWidth, alignment: .trailing)
+		}
+		.padding(.trailing, trailingEdgePadding)
 	}
 
 	private func showSavedFlag(_ flag: Binding<Bool>) {

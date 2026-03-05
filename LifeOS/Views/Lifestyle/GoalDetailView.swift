@@ -26,6 +26,14 @@ private struct GoalTrackingPoint: Identifiable {
 	let endDate: Date
 }
 
+private struct GoalCheckInPayload {
+	let title: String
+	let note: String
+	let progress: Double
+	let recordedAt: Date
+	let markAsCompleted: Bool
+}
+
 struct GoalDetailView: View {
 	@Environment(\.modelContext) private var modelContext
 	@Query(sort: \GoalMilestone.createdAt, order: .reverse) private var allMilestones: [GoalMilestone]
@@ -35,10 +43,21 @@ struct GoalDetailView: View {
 	@Bindable var goal: Goal
 
 	@State private var newMilestoneTitle: String = ""
-	@State private var progressNote: String = ""
 	@State private var trackingRange: GoalTrackingRange = .weekly
+	@State private var showDueDateCalendar = false
+	@State private var showStartDateCalendar = false
+	@State private var showCheckInSheet = false
+	@State private var completedProgressSnapshot: Double?
 
 	private let calendar = Calendar.current
+
+	private static let dayFormatter: DateFormatter = {
+		let formatter = DateFormatter()
+		formatter.locale = Locale(identifier: "zh_CN_POSIX")
+		formatter.calendar = Calendar(identifier: .gregorian)
+		formatter.dateFormat = "yyyy-MM-dd"
+		return formatter
+	}()
 
 	private var goalMilestones: [GoalMilestone] {
 		allMilestones
@@ -98,6 +117,13 @@ struct GoalDetailView: View {
 		return last.progress - first.progress
 	}
 
+	private var latestCheckInSummary: String {
+		guard let entry = goalProgressEntries.last else { return "暂无打卡记录" }
+		let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines)
+		let displayTitle = title.isEmpty ? "进度打卡" : title
+		return "\(formattedDate(entry.recordedAt)) · \(displayTitle)"
+	}
+
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: 22) {
@@ -112,27 +138,58 @@ struct GoalDetailView: View {
 						Label("状态", systemImage: "flag")
 							.foregroundStyle(.secondary)
 							.frame(width: 64, alignment: .leading)
-						Toggle("已完成", isOn: $goal.isCompleted)
+						Toggle("已完成", isOn: completionBinding)
 							.toggleStyle(.switch)
 					}
 
 					Toggle("设置截止日期", isOn: hasDueDateBinding)
 						.font(.subheadline)
-					if goal.dueDate != nil {
-						DatePicker(
-							"截止日期",
-							selection: dueDateBinding,
-							displayedComponents: .date
-						)
-						.datePickerStyle(.field)
+
+					if let dueDate = goal.dueDate {
+						HStack {
+							Label("截止日期", systemImage: "calendar")
+							Spacer()
+							Text(formattedDate(dueDate))
+								.foregroundStyle(.secondary)
+							Button(showDueDateCalendar ? "收起日历" : "选择日期") {
+								withAnimation { showDueDateCalendar.toggle() }
+							}
+							.buttonStyle(.bordered)
+							.controlSize(.small)
+						}
+
+						if showDueDateCalendar {
+							DatePicker(
+								"截止日期",
+								selection: dueDateBinding,
+								displayedComponents: .date
+							)
+							.labelsHidden()
+							.datePickerStyle(.graphical)
+						}
 					}
 
-					DatePicker(
-						"开始时间",
-						selection: $goal.startDate,
-						displayedComponents: [.date, .hourAndMinute]
-					)
-					.datePickerStyle(.field)
+					HStack {
+						Label("开始时间", systemImage: "calendar.badge.clock")
+						Spacer()
+						Text(formattedDate(goal.startDate))
+							.foregroundStyle(.secondary)
+						Button(showStartDateCalendar ? "收起日历" : "选择日期") {
+							withAnimation { showStartDateCalendar.toggle() }
+						}
+						.buttonStyle(.bordered)
+						.controlSize(.small)
+					}
+
+					if showStartDateCalendar {
+						DatePicker(
+							"开始时间",
+							selection: $goal.startDate,
+							displayedComponents: .date
+						)
+						.labelsHidden()
+						.datePickerStyle(.graphical)
+					}
 
 					VStack(alignment: .leading, spacing: 6) {
 						Label("目标描述", systemImage: "text.alignleft")
@@ -184,11 +241,15 @@ struct GoalDetailView: View {
 						}
 					}
 
-					HStack(spacing: 8) {
-						TextField("本次进展备注（可选）", text: $progressNote)
-							.textFieldStyle(.roundedBorder)
-						Button("记录当前进度") {
-							recordProgressEntry()
+					HStack {
+						Text(latestCheckInSummary)
+							.font(.caption)
+							.foregroundStyle(.secondary)
+						Spacer()
+						Button {
+							showCheckInSheet = true
+						} label: {
+							Label("打卡", systemImage: "checkmark.circle.badge.plus")
 						}
 						.buttonStyle(.borderedProminent)
 					}
@@ -301,7 +362,7 @@ struct GoalDetailView: View {
 							.fill(Color.gray.opacity(0.08))
 							.frame(height: 180)
 							.overlay(
-								Label("暂无打卡记录，先点击“记录当前进度”", systemImage: "chart.xyaxis.line")
+								Label("暂无打卡记录，点击“打卡”开始记录", systemImage: "chart.xyaxis.line")
 									.foregroundStyle(.secondary)
 							)
 					} else {
@@ -344,12 +405,15 @@ struct GoalDetailView: View {
 								.font(.caption)
 								.foregroundStyle(.secondary)
 							ForEach(goalProgressEntries.suffix(5).reversed()) { entry in
-								HStack {
-									Text(entry.recordedAt.formatted(date: .abbreviated, time: .shortened))
+								HStack(spacing: 8) {
+									Text(formattedDate(entry.recordedAt))
 										.font(.caption2)
 										.foregroundStyle(.secondary)
+									Text(entry.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "进度打卡" : entry.title)
+										.font(.caption)
 									Text(String(format: "%.0f%%", entry.progress * 100))
 										.font(.caption)
+										.foregroundStyle(.blue)
 									if !entry.note.isEmpty {
 										Text(entry.note)
 											.font(.caption2)
@@ -376,18 +440,31 @@ struct GoalDetailView: View {
 			.padding(28)
 		}
 		.navigationTitle(goal.title.isEmpty ? "目标详情" : goal.title)
-		.onChange(of: goal.progress) { _, newProgress in
-			if newProgress >= 1 {
-				goal.isCompleted = true
-			} else if goal.isCompleted {
+		.sheet(isPresented: $showCheckInSheet) {
+			GoalCheckInSheet(initialProgress: goal.progress) { payload in
+				saveCheckIn(payload)
+			}
+		}
+		.onChange(of: goal.progress) { oldProgress, newProgress in
+			if newProgress >= 1 && !goal.isCompleted {
+				markGoalCompleted(snapshotFrom: oldProgress)
+			} else if newProgress < 1 && goal.isCompleted {
 				goal.isCompleted = false
 			}
 		}
-		.onChange(of: goal.isCompleted) { _, isCompleted in
-			if isCompleted && goal.progress < 1 {
-				goal.progress = 1
+	}
+
+	private var completionBinding: Binding<Bool> {
+		Binding(
+			get: { goal.isCompleted },
+			set: { isCompleted in
+				if isCompleted {
+					markGoalCompleted(snapshotFrom: goal.progress)
+				} else {
+					restoreGoalFromCompleted()
+				}
 			}
-		}
+		)
 	}
 
 	private var hasDueDateBinding: Binding<Bool> {
@@ -396,8 +473,10 @@ struct GoalDetailView: View {
 			set: { enabled in
 				if enabled {
 					goal.dueDate = goal.dueDate ?? Date()
+					showDueDateCalendar = true
 				} else {
 					goal.dueDate = nil
+					showDueDateCalendar = false
 				}
 			}
 		)
@@ -436,17 +515,45 @@ struct GoalDetailView: View {
 		newMilestoneTitle = ""
 	}
 
-	private func recordProgressEntry() {
-		let note = progressNote.trimmingCharacters(in: .whitespacesAndNewlines)
+	private func saveCheckIn(_ payload: GoalCheckInPayload) {
+		let title = payload.title.trimmingCharacters(in: .whitespacesAndNewlines)
+		let note = payload.note.trimmingCharacters(in: .whitespacesAndNewlines)
+		let progress = min(1, max(0, payload.progress))
+
 		modelContext.insert(
 			GoalProgressEntry(
 				goalID: goal.id,
-				recordedAt: .now,
-				progress: goal.progress,
+				recordedAt: payload.recordedAt,
+				progress: progress,
+				title: title,
 				note: note
 			)
 		)
-		progressNote = ""
+
+		if payload.markAsCompleted || progress >= 1 {
+			markGoalCompleted(snapshotFrom: goal.progress)
+		} else {
+			goal.progress = progress
+			if goal.isCompleted {
+				goal.isCompleted = false
+			}
+		}
+	}
+
+	private func markGoalCompleted(snapshotFrom previousProgress: Double?) {
+		let value = previousProgress ?? goal.progress
+		if value < 1 {
+			completedProgressSnapshot = value
+		} else if completedProgressSnapshot == nil {
+			completedProgressSnapshot = goalProgressEntries.last(where: { $0.progress < 1 })?.progress ?? 0.95
+		}
+		goal.isCompleted = true
+		goal.progress = 1
+	}
+
+	private func restoreGoalFromCompleted() {
+		goal.isCompleted = false
+		goal.progress = completedProgressSnapshot ?? goalProgressEntries.last(where: { $0.progress < 1 })?.progress ?? 0.95
 	}
 
 	private func deleteGoalAndRelatedData() {
@@ -464,9 +571,11 @@ struct GoalDetailView: View {
 		goalProgressEntries.last(where: { $0.recordedAt < date })?.progress ?? 0
 	}
 
+	private func formattedDate(_ date: Date) -> String {
+		Self.dayFormatter.string(from: date)
+	}
+
 	private func buildDailyPoints(days: Int) -> [GoalTrackingPoint] {
-		let formatter = DateFormatter()
-		formatter.dateFormat = "M/d"
 		return (0..<days).reversed().compactMap { offset in
 			guard let date = calendar.date(byAdding: .day, value: -offset, to: Date()) else { return nil }
 			let start = calendar.startOfDay(for: date)
@@ -474,7 +583,7 @@ struct GoalDetailView: View {
 			let entries = goalProgressEntries.filter { $0.recordedAt >= start && $0.recordedAt < end }
 			let progress = entries.last?.progress ?? progressBefore(end)
 			return GoalTrackingPoint(
-				label: formatter.string(from: start),
+				label: formattedDate(start),
 				progress: progress,
 				checkIns: entries.count,
 				endDate: end
@@ -483,8 +592,6 @@ struct GoalDetailView: View {
 	}
 
 	private func buildWeeklyPoints(weeks: Int) -> [GoalTrackingPoint] {
-		let formatter = DateFormatter()
-		formatter.dateFormat = "M/d"
 		return (0..<weeks).reversed().compactMap { offset in
 			guard let anchor = calendar.date(byAdding: .weekOfYear, value: -offset, to: Date()),
 				  let interval = calendar.dateInterval(of: .weekOfYear, for: anchor) else { return nil }
@@ -493,7 +600,7 @@ struct GoalDetailView: View {
 			}
 			let progress = entries.last?.progress ?? progressBefore(interval.end)
 			return GoalTrackingPoint(
-				label: formatter.string(from: interval.start),
+				label: formattedDate(interval.start),
 				progress: progress,
 				checkIns: entries.count,
 				endDate: interval.end
@@ -502,8 +609,6 @@ struct GoalDetailView: View {
 	}
 
 	private func buildMonthlyPoints(months: Int) -> [GoalTrackingPoint] {
-		let formatter = DateFormatter()
-		formatter.dateFormat = "yy/MM"
 		return (0..<months).reversed().compactMap { offset in
 			guard let anchor = calendar.date(byAdding: .month, value: -offset, to: Date()),
 				  let interval = calendar.dateInterval(of: .month, for: anchor) else { return nil }
@@ -512,7 +617,7 @@ struct GoalDetailView: View {
 			}
 			let progress = entries.last?.progress ?? progressBefore(interval.end)
 			return GoalTrackingPoint(
-				label: formatter.string(from: interval.start),
+				label: formattedDate(interval.start),
 				progress: progress,
 				checkIns: entries.count,
 				endDate: interval.end
@@ -531,10 +636,8 @@ struct GoalDetailView: View {
 				$0.recordedAt >= quarterStart && $0.recordedAt < quarterEnd
 			}
 			let progress = entries.last?.progress ?? progressBefore(quarterEnd)
-			let quarter = (calendar.component(.month, from: quarterStart) - 1) / 3 + 1
-			let year = calendar.component(.year, from: quarterStart)
 			return GoalTrackingPoint(
-				label: "\(year)Q\(quarter)",
+				label: formattedDate(quarterStart),
 				progress: progress,
 				checkIns: entries.count,
 				endDate: quarterEnd
@@ -551,5 +654,128 @@ struct GoalDetailView: View {
 		normalized.month = startMonth
 		normalized.day = 1
 		return calendar.date(from: normalized)
+	}
+}
+
+private struct GoalCheckInSheet: View {
+	@Environment(\.dismiss) private var dismiss
+
+	let onSave: (GoalCheckInPayload) -> Void
+
+	@State private var checkInTitle = "进度打卡"
+	@State private var checkInNote = ""
+	@State private var checkInProgress: Double
+	@State private var checkInAt: Date = .now
+	@State private var markAsCompleted = false
+
+	private static let dayFormatter: DateFormatter = {
+		let formatter = DateFormatter()
+		formatter.locale = Locale(identifier: "zh_CN_POSIX")
+		formatter.calendar = Calendar(identifier: .gregorian)
+		formatter.dateFormat = "yyyy-MM-dd"
+		return formatter
+	}()
+
+	init(initialProgress: Double, onSave: @escaping (GoalCheckInPayload) -> Void) {
+		self.onSave = onSave
+		_checkInProgress = State(initialValue: min(1, max(0, initialProgress)))
+	}
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 16) {
+			HStack {
+				Text("目标打卡")
+					.font(.title3.bold())
+				Spacer()
+				Button("关闭") { dismiss() }
+					.buttonStyle(.bordered)
+			}
+
+			VStack(alignment: .leading, spacing: 8) {
+				Text("打卡标题")
+					.font(.caption)
+					.foregroundStyle(.secondary)
+				TextField("例如：本周推进", text: $checkInTitle)
+					.textFieldStyle(.roundedBorder)
+			}
+
+			VStack(alignment: .leading, spacing: 8) {
+				Text("打卡时间（精确到分钟）")
+					.font(.caption)
+					.foregroundStyle(.secondary)
+				DatePicker(
+					"打卡日期",
+					selection: $checkInAt,
+					displayedComponents: .date
+				)
+				.labelsHidden()
+				.datePickerStyle(.graphical)
+				DatePicker(
+					"打卡时间",
+					selection: $checkInAt,
+					displayedComponents: .hourAndMinute
+				)
+				.datePickerStyle(.field)
+				Text("日期展示：\(Self.dayFormatter.string(from: checkInAt))")
+					.font(.caption2)
+					.foregroundStyle(.secondary)
+			}
+
+			VStack(alignment: .leading, spacing: 8) {
+				Text("本次进度")
+					.font(.caption)
+					.foregroundStyle(.secondary)
+				Slider(value: $checkInProgress, in: 0...1, step: 0.05)
+				HStack(spacing: 8) {
+					ForEach([0.25, 0.5, 0.75, 1.0], id: \.self) { value in
+						Button {
+							checkInProgress = value
+						} label: {
+							Text(String(format: "%.0f%%", value * 100))
+								.font(.caption)
+								.frame(maxWidth: .infinity)
+						}
+						.buttonStyle(.bordered)
+					}
+				}
+				Text("当前进度：\(String(format: "%.0f%%", checkInProgress * 100))")
+					.font(.caption)
+					.foregroundStyle(.secondary)
+			}
+
+			Toggle("本次打卡后直接设为已完成", isOn: $markAsCompleted)
+
+			VStack(alignment: .leading, spacing: 8) {
+				Text("详情备注")
+					.font(.caption)
+					.foregroundStyle(.secondary)
+				TextEditor(text: $checkInNote)
+					.frame(height: 90)
+					.padding(8)
+					.background(Color(nsColor: .textBackgroundColor))
+					.clipShape(RoundedRectangle(cornerRadius: 10))
+					.overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.gray.opacity(0.2)))
+			}
+
+			HStack {
+				Spacer()
+				Button("保存打卡") {
+					let title = checkInTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+					onSave(
+						GoalCheckInPayload(
+							title: title.isEmpty ? "进度打卡" : title,
+							note: checkInNote,
+							progress: checkInProgress,
+							recordedAt: checkInAt,
+							markAsCompleted: markAsCompleted
+						)
+					)
+					dismiss()
+				}
+				.buttonStyle(.borderedProminent)
+			}
+		}
+		.padding(20)
+		.frame(width: 500)
 	}
 }
