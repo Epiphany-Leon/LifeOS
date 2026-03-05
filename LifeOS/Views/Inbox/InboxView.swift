@@ -31,6 +31,7 @@ struct InboxView: View {
 					ForEach(unprocessedItems) { item in
 						InboxRowView(item: item)
 							.tag(item)
+							.listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
 							.contextMenu {
 								Button(role: .destructive) {
 									if selectedItem == item { selectedItem = nil }
@@ -80,6 +81,7 @@ struct InboxRowView: View {
 				}
 			}
 		}
+		.frame(maxWidth: .infinity, alignment: .leading)
 		.padding(.vertical, 5)
 	}
 }

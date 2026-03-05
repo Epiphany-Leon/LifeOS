@@ -57,7 +57,7 @@ struct ContentView: View {
 		case .execution:
 			ExecutionView(selectedTask: $selectedTask)
 		case .knowledge:
-			KnowledgeView()
+			KnowledgeView(selectedNote: $selectedNote)
 		case .lifestyle:
 			LifestyleView(
 				selectedTab: $selectedLifestyleTab,
@@ -66,7 +66,7 @@ struct ContentView: View {
 				selectedConnection: $selectedConnection
 			)
 		case .vitals:
-			VitalsView()
+			VitalsView(selectedEntry: $selectedVitalsEntry)
 		}
 	}
 
@@ -90,15 +90,23 @@ struct ContentView: View {
 			}
 		case .knowledge:
 			if let note = selectedNote {
-				NoteDetailView(note: note)
+				NoteDetailView(selectedNote: $selectedNote, note: note)
 			} else {
-				placeholderView(icon: "book", message: "选择笔记开始阅读")
+				lifestyleCreatePlaceholder(
+					icon: "book",
+					message: "选择笔记开始阅读",
+					buttonTitle: "新建笔记"
+				) {
+					let note = Note(title: "新笔记")
+					modelContext.insert(note)
+					selectedNote = note
+				}
 			}
 		case .vitals:
 			if let entry = selectedVitalsEntry {
-				VitalsDetailView(entry: entry)
+				VitalsDetailView(selectedEntry: $selectedVitalsEntry, entry: entry)
 			} else {
-				placeholderView(icon: "sparkles", message: "选择记录查看详情")
+				vitalsCreatePlaceholder()
 			}
 		case .lifestyle:
 			lifestyleDetailView
@@ -164,6 +172,41 @@ struct ContentView: View {
 	}
 
 	// MARK: - 占位视图
+	private func vitalsCreatePlaceholder() -> some View {
+		VStack(spacing: 14) {
+			Image(systemName: "sparkles")
+				.font(.system(size: 40))
+				.foregroundStyle(.tertiary)
+			Text("选择记录查看详情")
+				.foregroundStyle(.secondary)
+				.font(.title3)
+
+			HStack(spacing: 8) {
+				ForEach(VitalsEntryType.allCases, id: \.self) { type in
+					Button(type.rawValue) {
+						createVitalsEntry(type)
+					}
+					.buttonStyle(.borderedProminent)
+					.controlSize(.small)
+				}
+			}
+		}
+		.frame(maxWidth: .infinity, maxHeight: .infinity)
+	}
+
+	private func createVitalsEntry(_ type: VitalsEntryType) {
+		let isProtected = type == .coreCode || type == .treehol
+		let entry = VitalsEntry(
+			content: "",
+			type: type,
+			category: type == .coreCode ? "未分类" : "",
+			isProtected: isProtected,
+			moodScore: type == .motivation ? 3 : 0
+		)
+		modelContext.insert(entry)
+		selectedVitalsEntry = entry
+	}
+
 	private func placeholderView(icon: String, message: String) -> some View {
 		VStack(spacing: 12) {
 			Image(systemName: icon)

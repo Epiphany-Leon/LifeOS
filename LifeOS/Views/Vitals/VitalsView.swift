@@ -7,170 +7,191 @@
 
 import SwiftUI
 import SwiftData
-import LocalAuthentication
 
 struct VitalsView: View {
-	@Environment(\.modelContext) private var modelContext
 	@Query(sort: \VitalsEntry.timestamp, order: .reverse) private var entries: [VitalsEntry]
 
-	@State private var selectedEntry: VitalsEntry?
+	@Binding var selectedEntry: VitalsEntry?
 	@State private var selectedType: VitalsEntryType? = nil   // nil = 全部
-	@State private var isAddingEntry = false
-	@State private var addingType: VitalsEntryType = .motivation
 
-	// 按类型筛选
-	var filteredEntries: [VitalsEntry] {
+	private let calendar = Calendar.current
+
+	private var filteredEntries: [VitalsEntry] {
 		guard let type = selectedType else { return entries }
 		return entries.filter { $0.type == type }
 	}
 
+	private var coreEntries: [VitalsEntry] {
+		entries.filter { $0.type == .coreCode }
+	}
+
+	private var coreCategoryCount: Int {
+		Set(coreEntries.map { coreCategoryLabel($0.category) }).count
+	}
+
+	private var updatedThisWeekCount: Int {
+		guard let weekStart = calendar.dateInterval(of: .weekOfYear, for: Date())?.start else { return 0 }
+		return entries.filter { $0.timestamp >= weekStart }.count
+	}
+
+	private var archivedCount: Int {
+		entries.filter(\.isArchived).count
+	}
+
+	private var groupedCoreEntries: [(String, [VitalsEntry])] {
+		let grouped = Dictionary(
+			grouping: filteredEntries.filter { $0.type == .coreCode },
+			by: { coreCategoryLabel($0.category) }
+		)
+		return grouped.keys.sorted().map { category in
+			(category, (grouped[category] ?? []).sorted(by: { $0.timestamp > $1.timestamp }))
+		}
+	}
+
 	var body: some View {
 		VStack(spacing: 0) {
-
-			// 统计栏
-			HStack(spacing: 16) {
-				VitalsStatBadge(
-					type: .coreCode,
-					count: entries.filter { $0.type == .coreCode }.count
-				)
-				VitalsStatBadge(
-					type: .treehol,
-					count: entries.filter { $0.type == .treehol }.count
-				)
-				VitalsStatBadge(
-					type: .motivation,
-					count: entries.filter { $0.type == .motivation }.count
-				)
-				Spacer()
-			}
-			.padding(.horizontal, 16)
-			.padding(.vertical, 10)
-			.background(Color(nsColor: .windowBackgroundColor))
+			header
 
 			Divider()
 
-			// 类型筛选器
-			HStack(spacing: 0) {
-				TypeFilterButton(label: "全部", isSelected: selectedType == nil) {
-					selectedType = nil
-				}
-				ForEach(VitalsEntryType.allCases, id: \.self) { type in
-					TypeFilterButton(label: type.rawValue, isSelected: selectedType == type) {
-						selectedType = type
-					}
-				}
-				Spacer()
-
-				// 新增按钮
-				Menu {
-					ForEach(VitalsEntryType.allCases, id: \.self) { type in
-						Button {
-							addingType = type
-							isAddingEntry = true
-						} label: {
-							Label(type.rawValue, systemImage: typeIcon(type))
-						}
-					}
-				} label: {
-					Label("新增", systemImage: "plus")
-						.font(.subheadline)
-				}
-				.buttonStyle(.borderedProminent)
-				.controlSize(.small)
-				.padding(.trailing, 12)
-			}
-			.padding(.vertical, 6)
+			typeFilterBar
 
 			Divider()
 
-			// 列表
 			List(selection: $selectedEntry) {
 				if filteredEntries.isEmpty {
 					ContentUnavailableView(
 						"还没有记录",
 						systemImage: "sparkles",
-						description: Text("点击右上角开始记录")
+						description: Text("在右侧 Detail 栏新建并编辑记录")
 					)
+				} else if selectedType == .coreCode {
+					ForEach(groupedCoreEntries, id: \.0) { category, items in
+						Section(header: CoreCategorySectionHeader(category: category, count: items.count)) {
+							ForEach(items) { entry in
+								VitalsRowView(entry: entry)
+									.tag(entry)
+									.listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+							}
+						}
+					}
 				} else {
 					ForEach(filteredEntries) { entry in
-						VitalsRowView(entry: entry) {
-							attemptDelete(entry: entry)
-						}
-						.tag(entry)
+						VitalsRowView(entry: entry)
+							.tag(entry)
+							.listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
 					}
 				}
 			}
 		}
 		.navigationTitle("觉知 Vitals")
 		.navigationSplitViewColumnWidth(min: ColumnWidth.min, ideal: ColumnWidth.ideal, max: ColumnWidth.max)
-		.sheet(isPresented: $isAddingEntry) {
-			AddVitalsEntrySheet(isPresented: $isAddingEntry, defaultType: addingType)
-		}
-	}
-
-	// MARK: - 删除保护
-	private func attemptDelete(entry: VitalsEntry) {
-		if entry.isProtected {
-			authenticateToDelete(entry: entry)
-		} else {
-			modelContext.delete(entry)
-		}
-	}
-
-	private func authenticateToDelete(entry: VitalsEntry) {
-		let context = LAContext()
-		var error: NSError?
-
-		if context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) {
-			context.evaluatePolicy(
-				.deviceOwnerAuthentication,
-				localizedReason: "需要验证身份才能删除「\(entry.type.rawValue)」记录"
-			) { success, _ in
-				DispatchQueue.main.async {
-					if success { modelContext.delete(entry) }
-				}
+		.onChange(of: entries.map(\.id)) { _, ids in
+			if let selected = selectedEntry, !ids.contains(selected.id) {
+				selectedEntry = nil
 			}
 		}
 	}
 
-	private func typeIcon(_ type: VitalsEntryType) -> String {
-		switch type {
-		case .coreCode:   return "shield.lefthalf.filled"
-		case .treehol:    return "tree"
-		case .motivation: return "bolt.heart"
+	private var header: some View {
+		LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+			VitalsMetricCard(
+				title: "记录总数",
+				value: "\(entries.count)",
+				subtitle: "觉知沉淀规模",
+				color: .blue
+			)
+			VitalsMetricCard(
+				title: "核心守则",
+				value: "\(coreEntries.count)",
+				subtitle: "分类 \(coreCategoryCount)",
+				color: .purple
+			)
+			VitalsMetricCard(
+				title: "本周更新",
+				value: "\(updatedThisWeekCount)",
+				subtitle: "最近活跃度",
+				color: .teal
+			)
+			VitalsMetricCard(
+				title: "动力/灵感",
+				value: "\(entries.filter { $0.type == .motivation }.count)",
+				subtitle: "已存档 \(archivedCount)",
+				color: .orange
+			)
 		}
+		.padding(.horizontal, 12)
+		.padding(.vertical, 10)
+		.background(Color(nsColor: .windowBackgroundColor))
+	}
+
+	private var typeFilterBar: some View {
+		HStack(spacing: 0) {
+			TypeFilterButton(label: "全部", isSelected: selectedType == nil) {
+				selectedType = nil
+			}
+			ForEach(VitalsEntryType.allCases, id: \.self) { type in
+				TypeFilterButton(label: type.rawValue, isSelected: selectedType == type) {
+					selectedType = type
+				}
+			}
+			Spacer()
+		}
+		.padding(.vertical, 6)
+	}
+
+	private func coreCategoryLabel(_ raw: String) -> String {
+		let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+		return trimmed.isEmpty ? "未分类" : trimmed
 	}
 }
 
-// MARK: - 统计徽章
-struct VitalsStatBadge: View {
-	var type: VitalsEntryType
-	var count: Int
-
-	var color: Color {
-		switch type {
-		case .coreCode:   return .purple
-		case .treehol:    return .green
-		case .motivation: return .orange
-		}
-	}
-
-	var icon: String {
-		switch type {
-		case .coreCode:   return "shield.lefthalf.filled"
-		case .treehol:    return "tree"
-		case .motivation: return "bolt.heart"
-		}
-	}
+private struct VitalsMetricCard: View {
+	var title: String
+	var value: String
+	var subtitle: String
+	var color: Color
 
 	var body: some View {
-		HStack(spacing: 4) {
-			Image(systemName: icon).font(.caption).foregroundStyle(color)
-			VStack(alignment: .leading, spacing: 1) {
-				Text("\(count)").font(.system(size: 15, weight: .bold)).foregroundStyle(color)
-				Text(type.rawValue).font(.caption2).foregroundStyle(.secondary)
-			}
+		VStack(alignment: .leading, spacing: 4) {
+			Text(title)
+				.font(.caption)
+				.foregroundStyle(.secondary)
+				.lineLimit(1)
+			Text(value)
+				.font(.system(size: 20, weight: .bold))
+				.foregroundStyle(color)
+				.lineLimit(1)
+				.minimumScaleFactor(0.75)
+			Text(subtitle)
+				.font(.caption2)
+				.foregroundStyle(.secondary)
+				.lineLimit(1)
 		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding(.horizontal, 10)
+		.padding(.vertical, 8)
+		.background(color.opacity(0.1))
+		.clipShape(RoundedRectangle(cornerRadius: 10))
+	}
+}
+
+private struct CoreCategorySectionHeader: View {
+	var category: String
+	var count: Int
+
+	var body: some View {
+		HStack(spacing: 8) {
+			Text(category)
+				.font(.caption)
+			Text("\(count)")
+				.font(.caption2)
+				.padding(.horizontal, 6)
+				.padding(.vertical, 1)
+				.background(Color.secondary.opacity(0.15))
+				.clipShape(Capsule())
+		}
+		.foregroundStyle(.secondary)
 	}
 }
 
@@ -198,7 +219,6 @@ struct TypeFilterButton: View {
 // MARK: - 条目行
 struct VitalsRowView: View {
 	var entry: VitalsEntry
-	var onDelete: () -> Void
 
 	var typeColor: Color {
 		switch entry.type {
@@ -216,10 +236,14 @@ struct VitalsRowView: View {
 		}
 	}
 
+	private var coreCategoryLabel: String {
+		let trimmed = entry.category.trimmingCharacters(in: .whitespacesAndNewlines)
+		return trimmed.isEmpty ? "未分类" : trimmed
+	}
+
 	var body: some View {
 		VStack(alignment: .leading, spacing: 6) {
 			HStack(spacing: 6) {
-				// 类型标签
 				Label(entry.type.rawValue, systemImage: typeIcon)
 					.font(.caption2)
 					.padding(.horizontal, 6)
@@ -227,6 +251,16 @@ struct VitalsRowView: View {
 					.background(typeColor.opacity(0.12))
 					.foregroundStyle(typeColor)
 					.clipShape(Capsule())
+
+				if entry.type == .coreCode {
+					Text(coreCategoryLabel)
+						.font(.caption2)
+						.padding(.horizontal, 6)
+						.padding(.vertical, 2)
+						.background(Color.purple.opacity(0.12))
+						.foregroundStyle(.purple)
+						.clipShape(Capsule())
+				}
 
 				if entry.isProtected {
 					Image(systemName: "lock.fill")
@@ -242,7 +276,6 @@ struct VitalsRowView: View {
 
 				Spacer()
 
-				// 动力打分星级
 				if entry.type == .motivation && entry.moodScore > 0 {
 					HStack(spacing: 1) {
 						ForEach(1...5, id: \.self) { i in
@@ -258,21 +291,11 @@ struct VitalsRowView: View {
 				.font(.body)
 				.lineLimit(3)
 
-			Text(entry.timestamp, style: .relative)
+			Text(AppDateFormatter.ymd(entry.timestamp))
 				.font(.caption2)
 				.foregroundStyle(.tertiary)
 		}
+		.frame(maxWidth: .infinity, alignment: .leading)
 		.padding(.vertical, 4)
-		.contextMenu {
-			if !entry.isProtected {
-				Button(role: .destructive, action: onDelete) {
-					Label("删除", systemImage: "trash")
-				}
-			} else {
-				Button(action: onDelete) {
-					Label("删除（需要验证）", systemImage: "lock.fill")
-				}
-			}
-		}
 	}
 }

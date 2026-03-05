@@ -86,6 +86,7 @@ struct ConnectionView: View {
 					ForEach(filteredConnections) { connection in
 						ConnectionRowView(connection: connection)
 							.tag(connection)
+							.listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
 					}
 				}
 			}
@@ -201,6 +202,7 @@ struct ConnectionRowView: View {
 			}
 			Spacer()
 		}
+		.frame(maxWidth: .infinity, alignment: .leading)
 		.padding(.vertical, 4)
 	}
 }
@@ -315,6 +317,9 @@ struct ConnectionDetailView: View {
 					displayedComponents: .date
 				)
 				.datePickerStyle(.field)
+				Text("日期：\(AppDateFormatter.ymd(lastContactDateBinding.wrappedValue))")
+					.font(.caption2)
+					.foregroundStyle(.secondary)
 			}
 
 			HStack(spacing: 12) {

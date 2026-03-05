@@ -95,6 +95,10 @@ struct TaskDetailView: View {
 							selection: dueDateBinding,
 							displayedComponents: .date
 						)
+						.datePickerStyle(.field)
+						Text("日期：\(AppDateFormatter.ymd(dueDateBinding.wrappedValue))")
+							.font(.caption2)
+							.foregroundStyle(.secondary)
 					}
 
 					if isGeneratingSuggestion {

@@ -17,6 +17,7 @@ struct AddVitalsEntrySheet: View {
 	@State private var content: String = ""
 	@State private var selectedType: VitalsEntryType = .motivation
 	@State private var moodScore: Int = 3
+	@State private var coreCategory: String = "未分类"
 
 	init(isPresented: Binding<Bool>, defaultType: VitalsEntryType) {
 		self._isPresented = isPresented
@@ -54,6 +55,16 @@ struct AddVitalsEntrySheet: View {
 
 			// 类型说明
 			typeHintView
+
+			if selectedType == .coreCode {
+				VStack(alignment: .leading, spacing: 8) {
+					Text("守则分类")
+						.font(.caption)
+						.foregroundStyle(.secondary)
+					TextField("例如：决策原则、沟通原则、健康原则", text: $coreCategory)
+						.textFieldStyle(.roundedBorder)
+				}
+			}
 
 			// 内容输入
 			TextEditor(text: $content)
@@ -164,10 +175,16 @@ struct AddVitalsEntrySheet: View {
 		let entry = VitalsEntry(
 			content: content,
 			type: selectedType,
+			category: selectedType == .coreCode ? normalizedCoreCategory : "",
 			isProtected: isProtected,
 			moodScore: selectedType == .motivation ? moodScore : 0
 		)
 		modelContext.insert(entry)
 		isPresented = false
+	}
+
+	private var normalizedCoreCategory: String {
+		let trimmed = coreCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+		return trimmed.isEmpty ? "未分类" : trimmed
 	}
 }

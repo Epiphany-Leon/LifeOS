@@ -109,13 +109,16 @@ struct AccountDetailView: View {
 
 				Section("偏好") {
 					rightAlignedRow(label: "全局货币") {
-						Picker("全局货币", selection: $appState.globalCurrency) {
-							ForEach(CurrencyCode.allCases) { code in
-								Text(code.displayName).tag(code.rawValue)
+						HStack {
+							Spacer(minLength: 0)
+							Picker("全局货币", selection: $appState.globalCurrency) {
+								ForEach(CurrencyCode.allCases) { code in
+									Text(code.displayName).tag(code.rawValue)
+								}
 							}
+							.labelsHidden()
+							.frame(width: 220, alignment: .trailing)
 						}
-						.labelsHidden()
-						.frame(width: 220)
 					}
 
 					rightAlignedRow(label: "月度预算") {
@@ -141,15 +144,18 @@ struct AccountDetailView: View {
 
 				Section("API Token") {
 					rightAlignedRow(label: "保存位置") {
-						Picker("保存位置", selection: $appState.apiTokenStorageMode) {
-							ForEach(APITokenStorageMode.allCases) { mode in
-								Text(mode.label).tag(mode.rawValue)
+						HStack {
+							Spacer(minLength: 0)
+							Picker("保存位置", selection: $appState.apiTokenStorageMode) {
+								ForEach(APITokenStorageMode.allCases) { mode in
+									Text(mode.label).tag(mode.rawValue)
+								}
 							}
-						}
-						.labelsHidden()
-						.frame(width: 220)
-						.onChange(of: appState.apiTokenStorageMode) { _, _ in
-							savedApiKey = AICredentialStore.readAPIKey()
+							.labelsHidden()
+							.frame(width: 220, alignment: .trailing)
+							.onChange(of: appState.apiTokenStorageMode) { _, _ in
+								savedApiKey = AICredentialStore.readAPIKey()
+							}
 						}
 					}
 

@@ -40,6 +40,7 @@ struct DashboardArchiveListView: View {
 				}
 				.padding(.vertical, 2)
 				.tag(nil as DashboardSnapshot?)   // ✅ nil = 当月实时
+				.listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
 			}
 
 			// ✅ 有存档时才显示存档 Section
@@ -48,6 +49,7 @@ struct DashboardArchiveListView: View {
 					ForEach(snapshots) { snap in
 						SnapshotRowView(snap: snap)
 							.tag(snap as DashboardSnapshot?)
+							.listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
 					}
 				}
 			}
@@ -107,6 +109,7 @@ struct SnapshotRowView: View {
 				.font(.caption2)
 				.foregroundStyle(.tertiary)
 		}
+		.frame(maxWidth: .infinity, alignment: .leading)
 		.padding(.vertical, 2)
 	}
 }

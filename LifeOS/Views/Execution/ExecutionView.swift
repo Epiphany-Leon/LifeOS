@@ -133,6 +133,7 @@ struct ExecutionView: View {
 							ForEach(items) { task in
 								TaskRowView(task: task)
 									.tag(task)
+									.listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
 							}
 							.onDelete { offsets in
 								for index in offsets {
@@ -283,7 +284,7 @@ struct TaskRowView: View {
 					.foregroundStyle(task.status == .done ? .secondary : .primary)
 
 				if let due = task.dueDate {
-					Label(due.formatted(date: .abbreviated, time: .omitted), systemImage: "calendar")
+					Label(AppDateFormatter.ymd(due), systemImage: "calendar")
 						.font(.caption)
 						.foregroundStyle(due < Date() && !task.isDone ? .red : .secondary)
 				}
@@ -317,6 +318,7 @@ struct TaskRowView: View {
 				.foregroundStyle(statusColor)
 				.clipShape(Capsule())
 		}
+		.frame(maxWidth: .infinity, alignment: .leading)
 		.padding(.vertical, 2)
 	}
 
@@ -413,6 +415,10 @@ struct AddTaskSheet: View {
 				Toggle("设置截止日期", isOn: $hasDueDate)
 				if hasDueDate {
 					DatePicker("截止日期", selection: $dueDate, displayedComponents: .date)
+						.datePickerStyle(.field)
+					Text("日期：\(AppDateFormatter.ymd(dueDate))")
+						.font(.caption2)
+						.foregroundStyle(.secondary)
 				}
 
 				TextField("备注", text: $notes, axis: .vertical)

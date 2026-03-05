@@ -90,3 +90,17 @@ enum CurrencyService {
 		(UserDefaults.standard.dictionary(forKey: customRatesKey) as? [String: Double]) ?? [:]
 	}
 }
+
+enum AppDateFormatter {
+	private static let ymdFormatter: DateFormatter = {
+		let formatter = DateFormatter()
+		formatter.locale = Locale(identifier: "zh_CN_POSIX")
+		formatter.calendar = Calendar(identifier: .gregorian)
+		formatter.dateFormat = "yyyy-MM-dd"
+		return formatter
+	}()
+
+	static func ymd(_ date: Date) -> String {
+		ymdFormatter.string(from: date)
+	}
+}

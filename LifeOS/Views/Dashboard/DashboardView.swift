@@ -55,9 +55,10 @@ struct DashboardView: View {
 	var totalExecutionCount: Int { pendingTasks + inProgressTasks + doneTasks }
 
 	var knowledgeTopicTags: [String] {
-		let topics = notes
-			.map { $0.topic.trimmingCharacters(in: .whitespacesAndNewlines) }
-			.filter { !$0.isEmpty }
+		let topics = notes.flatMap { note in
+			let tags = KnowledgeTagCodec.parse(note.topic)
+			return tags.isEmpty ? ["未分类"] : tags
+		}
 		return normalizedTagList(topics, fallback: "未分类")
 	}
 
@@ -74,6 +75,16 @@ struct DashboardView: View {
 	}
 	var monthlyIncome: Double {
 		monthlyIncome(for: Date())
+	}
+
+	var lifestyleTags: [String] {
+		[
+			"\(CurrencyService.format(monthlyIncome, currency: displayCurrency, showSign: true)) 收入",
+			"\(activeGoals) 目标",
+			"\(totalConnections) 人脉",
+			"高优先 \(highPriorityConnections)",
+			"待跟进 \(followUpConnections)"
+		]
 	}
 
 	var systemAlerts: [String] {
@@ -190,12 +201,12 @@ struct DashboardView: View {
 					color: .blue,
 					tags: knowledgeTopicTags
 				)
-				DashboardCard(
-					title:    "生活 Lifestyle",
-					value:    "\(CurrencyService.format(abs(monthlyExpense), currency: displayCurrency, showSign: false)) 支出",
-					subtitle: "\(CurrencyService.format(monthlyIncome, currency: displayCurrency, showSign: true)) 收入 · \(activeGoals) 目标 · \(totalConnections) 人脉（高优先 \(highPriorityConnections) · 待跟进 \(followUpConnections)）",
-					icon:     "cup.and.saucer.fill",
-					color:    .green
+				moduleTagCard(
+					title: "生活 Lifestyle",
+					value: "\(CurrencyService.format(abs(monthlyExpense), currency: displayCurrency, showSign: false)) 支出",
+					icon: "cup.and.saucer.fill",
+					color: .green,
+					tags: lifestyleTags
 				)
 				moduleTagCard(
 					title: "觉知 Vitals",
@@ -344,12 +355,16 @@ struct DashboardView: View {
 					icon:     "book.fill",
 					color:    .blue
 				)
-				DashboardCard(
-					title:    "生活 Lifestyle",
-					value:    "\(CurrencyService.format(abs(snap.monthlyExpense), currency: displayCurrency, showSign: false)) 支出",
-					subtitle: "\(CurrencyService.format(snap.monthlyIncome, currency: displayCurrency, showSign: true)) 收入 · \(snap.activeGoals) 目标",
-					icon:     "cup.and.saucer.fill",
-					color:    .green
+				moduleTagCard(
+					title: "生活 Lifestyle",
+					value: "\(CurrencyService.format(abs(snap.monthlyExpense), currency: displayCurrency, showSign: false)) 支出",
+					icon: "cup.and.saucer.fill",
+					color: .green,
+					tags: [
+						"\(CurrencyService.format(snap.monthlyIncome, currency: displayCurrency, showSign: true)) 收入",
+						"\(snap.activeGoals) 目标",
+						"月度归档"
+					]
 				)
 				DashboardCard(
 					title:    "觉知 Vitals",

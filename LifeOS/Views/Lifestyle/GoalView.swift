@@ -77,6 +77,7 @@ struct GoalView: View {
 								milestoneTotal: stats.total
 							)
 							.tag(goal)
+							.listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
 						}
 					}
 				}
@@ -92,6 +93,7 @@ struct GoalView: View {
 									milestoneTotal: stats.total
 								)
 								.tag(goal)
+								.listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
 							}
 						}
 					} header: {
@@ -243,6 +245,7 @@ struct GoalRowView: View {
 			ProgressView(value: goal.progress, total: 1.0)
 				.tint(goal.isCompleted ? .green : .blue)
 		}
+		.frame(maxWidth: .infinity, alignment: .leading)
 		.padding(.vertical, 4)
 	}
 }

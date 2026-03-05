@@ -8,10 +8,37 @@
 import SwiftUI
 import SwiftData
 
-private enum AccountingCategories {
-	static let defaults: [String] = [
-		"餐饮", "交通", "住房", "购物", "数码", "学习", "医疗", "旅行", "社交", "娱乐", "收入", "其他"
+private enum AccountingCategoryCatalog {
+	static let expenseCategories: [String] = [
+		"餐饮", "购物", "日用", "交通", "水果", "零食", "运动", "娱乐", "通讯", "服饰",
+		"美容", "住房", "家庭", "社交", "旅行", "数码", "汽车", "医疗", "书籍", "学习",
+		"宠物", "礼品", "办公", "维修", "彩票", "红包", "还款", "借出", "饮品", "追星",
+		"游戏", "快递", "捐赠", "礼金", "烟酒", "蔬菜", "投资", "其他"
 	]
+
+	static let incomeCategories: [String] = [
+		"工资", "租金", "分红", "理财", "年终奖", "借入", "收款"
+	]
+
+	static let expenseCategorySet: Set<String> = Set(expenseCategories)
+	static let incomeCategorySet: Set<String> = Set(incomeCategories)
+	static let allCategories: [String] = expenseCategories + incomeCategories
+
+	static func isIncomeCategory(_ category: String) -> Bool {
+		incomeCategorySet.contains(category)
+	}
+}
+
+private enum AccountingFlowTag: String, CaseIterable, Hashable {
+	case expense = "支出"
+	case income = "收入"
+
+	var tint: Color {
+		switch self {
+		case .expense: return .orange
+		case .income: return .green
+		}
+	}
 }
 
 struct AccountingView: View {
@@ -20,25 +47,57 @@ struct AccountingView: View {
 
 	@Binding var selectedTransaction: Transaction?
 
-	@State private var selectedCategory = "全部"
 	@State private var searchText = ""
-	@State private var isShowingFilterPicker = false
+	@State private var selectedFlowTags: Set<AccountingFlowTag> = []
+	@State private var selectedCategories: Set<String> = []
+	@State private var isShowingFilterList = false
 
 	private var globalCurrency: CurrencyCode {
 		appState.selectedCurrencyCode
 	}
 
-	private var allCategories: [String] {
-		let dynamic = transactions
-			.map { $0.category.trimmingCharacters(in: .whitespacesAndNewlines) }
-			.filter { !$0.isEmpty }
-		let set = Set(AccountingCategories.defaults + dynamic)
-		return ["全部"] + set.sorted()
+	private var dynamicExpenseCategories: [String] {
+		Set(
+			transactions
+				.filter { $0.amount < 0 }
+				.map { normalizedCategory(for: $0) }
+				.filter { !AccountingCategoryCatalog.expenseCategorySet.contains($0) }
+		)
+		.sorted()
+	}
+
+	private var dynamicIncomeCategories: [String] {
+		Set(
+			transactions
+				.filter { $0.amount >= 0 }
+				.map { normalizedCategory(for: $0) }
+				.filter { !AccountingCategoryCatalog.incomeCategorySet.contains($0) }
+		)
+		.sorted()
+	}
+
+	private var visibleFilterCategories: [String] {
+		if selectedFlowTags == [.expense] {
+			return uniqueCategories(AccountingCategoryCatalog.expenseCategories + dynamicExpenseCategories)
+		}
+		if selectedFlowTags == [.income] {
+			return uniqueCategories(AccountingCategoryCatalog.incomeCategories + dynamicIncomeCategories)
+		}
+		let dynamic = Set(dynamicExpenseCategories + dynamicIncomeCategories)
+		return uniqueCategories(AccountingCategoryCatalog.allCategories + dynamic.sorted())
+	}
+
+	private var flowFilteredTransactions: [Transaction] {
+		guard !selectedFlowTags.isEmpty else { return transactions }
+		return transactions.filter { tx in
+			let flow: AccountingFlowTag = tx.amount >= 0 ? .income : .expense
+			return selectedFlowTags.contains(flow)
+		}
 	}
 
 	private var categoryFilteredTransactions: [Transaction] {
-		guard selectedCategory != "全部" else { return transactions }
-		return transactions.filter { ($0.category.isEmpty ? "其他" : $0.category) == selectedCategory }
+		guard !selectedCategories.isEmpty else { return flowFilteredTransactions }
+		return flowFilteredTransactions.filter { selectedCategories.contains(normalizedCategory(for: $0)) }
 	}
 
 	private var filteredTransactions: [Transaction] {
@@ -47,7 +106,7 @@ struct AccountingView: View {
 		return categoryFilteredTransactions.filter { tx in
 			let title = tx.title.trimmingCharacters(in: .whitespacesAndNewlines)
 			let stream = tx.streamName.trimmingCharacters(in: .whitespacesAndNewlines)
-			let category = tx.category.trimmingCharacters(in: .whitespacesAndNewlines)
+			let category = normalizedCategory(for: tx)
 			let note = tx.note.trimmingCharacters(in: .whitespacesAndNewlines)
 			let amountText = String(format: "%.2f", abs(tx.amount))
 			return title.localizedCaseInsensitiveContains(keyword)
@@ -85,50 +144,9 @@ struct AccountingView: View {
 
 			Divider()
 
-			HStack(spacing: 10) {
-				Text("分类筛选")
-					.font(.caption)
-					.foregroundStyle(.secondary)
-				Button {
-					isShowingFilterPicker = true
-				} label: {
-					HStack(spacing: 6) {
-						Text(selectedCategory)
-						Image(systemName: "chevron.down")
-							.font(.caption)
-					}
-					.padding(.horizontal, 10)
-					.padding(.vertical, 5)
-					.background(Color(nsColor: .controlBackgroundColor))
-					.clipShape(Capsule())
-				}
-				.buttonStyle(.plain)
-				Spacer()
-			}
-			.padding(.horizontal, 12)
-			.padding(.vertical, 8)
+			filterTagBar
 
-			HStack(spacing: 8) {
-				Image(systemName: "magnifyingglass")
-					.foregroundStyle(.secondary)
-				TextField("搜索分类、标题、备注、金额…", text: $searchText)
-					.textFieldStyle(.plain)
-				if !searchText.isEmpty {
-					Button {
-						searchText = ""
-					} label: {
-						Image(systemName: "xmark.circle.fill")
-							.foregroundStyle(.secondary)
-					}
-					.buttonStyle(.plain)
-				}
-			}
-			.padding(.horizontal, 10)
-			.padding(.vertical, 8)
-			.background(Color(nsColor: .controlBackgroundColor))
-			.clipShape(RoundedRectangle(cornerRadius: 8))
-			.padding(.horizontal, 12)
-			.padding(.bottom, 8)
+			searchBar
 
 			Divider()
 
@@ -137,7 +155,7 @@ struct AccountingView: View {
 					ContentUnavailableView(
 						"还没有记录",
 						systemImage: "yensign.circle",
-						description: Text("点击右上角记一笔后，在右侧详情编辑")
+						description: Text("在右侧详情新建后，可在这里按分类筛选")
 					)
 				} else {
 					ForEach(filteredTransactions) { tx in
@@ -147,18 +165,109 @@ struct AccountingView: View {
 							displayCurrency: globalCurrency
 						)
 						.tag(tx)
+						.listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
 					}
 				}
 			}
 		}
-		.sheet(isPresented: $isShowingFilterPicker) {
-			AccountingCategoryPickerSheet(
-				isPresented: $isShowingFilterPicker,
-				title: "选择筛选分类",
-				categories: allCategories,
-				selectedCategory: $selectedCategory
+		.sheet(isPresented: $isShowingFilterList) {
+			AccountingFilterListSheet(
+				isPresented: $isShowingFilterList,
+				selectedFlowTags: $selectedFlowTags,
+				selectedCategories: $selectedCategories,
+				flowCounts: flowCounts,
+				categoryCounts: categoryCounts,
+				categories: visibleFilterCategories
 			)
 		}
+		.onChange(of: transactions.map(\.id)) { _, ids in
+			if let selected = selectedTransaction, !ids.contains(selected.id) {
+				selectedTransaction = nil
+			}
+			normalizeSelectedCategories()
+		}
+		.onChange(of: selectedFlowTags) { _, _ in
+			normalizeSelectedCategories()
+		}
+	}
+
+	private var filterTagBar: some View {
+		HStack(spacing: 8) {
+			ScrollView(.horizontal, showsIndicators: false) {
+				HStack(spacing: 8) {
+					AccountingFilterChip(
+						title: "全部",
+						count: transactions.count,
+						isSelected: selectedFlowTags.isEmpty && selectedCategories.isEmpty,
+						tint: .accentColor
+					) {
+						selectedFlowTags.removeAll()
+						selectedCategories.removeAll()
+					}
+
+					ForEach(AccountingFlowTag.allCases, id: \.self) { flow in
+						AccountingFilterChip(
+							title: flow.rawValue,
+							count: flowCounts[flow] ?? 0,
+							isSelected: selectedFlowTags.contains(flow),
+							tint: flow.tint
+						) {
+							toggleFlow(flow)
+						}
+					}
+
+					ForEach(visibleFilterCategories, id: \.self) { category in
+						AccountingFilterChip(
+							title: category,
+							count: categoryCounts[category] ?? 0,
+							isSelected: selectedCategories.contains(category),
+							tint: AccountingCategoryCatalog.isIncomeCategory(category) ? .green : .orange
+						) {
+							toggleCategory(category)
+						}
+					}
+				}
+				.padding(.vertical, 2)
+			}
+
+			Button {
+				isShowingFilterList = true
+			} label: {
+				Image(systemName: "list.bullet")
+					.font(.subheadline)
+					.padding(.horizontal, 10)
+					.padding(.vertical, 7)
+					.background(Color(nsColor: .controlBackgroundColor))
+					.clipShape(Capsule())
+			}
+			.buttonStyle(.plain)
+		}
+		.padding(.horizontal, 12)
+		.padding(.vertical, 8)
+	}
+
+	private var searchBar: some View {
+		HStack(spacing: 8) {
+			Image(systemName: "magnifyingglass")
+				.foregroundStyle(.secondary)
+			TextField("搜索分类、标题、备注、金额…", text: $searchText)
+				.textFieldStyle(.plain)
+			if !searchText.isEmpty {
+				Button {
+					searchText = ""
+				} label: {
+					Image(systemName: "xmark.circle.fill")
+						.foregroundStyle(.secondary)
+				}
+				.buttonStyle(.plain)
+			}
+		}
+		.padding(.horizontal, 10)
+		.padding(.vertical, 8)
+		.background(Color(nsColor: .controlBackgroundColor))
+		.clipShape(RoundedRectangle(cornerRadius: 8))
+		.padding(.horizontal, 12)
+		.padding(.bottom, 8)
 	}
 
 	private var header: some View {
@@ -194,11 +303,194 @@ struct AccountingView: View {
 		.background(Color(nsColor: .windowBackgroundColor))
 	}
 
+	private var flowCounts: [AccountingFlowTag: Int] {
+		[
+			.expense: transactions.filter { $0.amount < 0 }.count,
+			.income: transactions.filter { $0.amount >= 0 }.count
+		]
+	}
+
+	private var categoryCounts: [String: Int] {
+		Dictionary(uniqueKeysWithValues: visibleFilterCategories.map { category in
+			(category, transactions.filter { normalizedCategory(for: $0) == category }.count)
+		})
+	}
+
+	private func toggleFlow(_ flow: AccountingFlowTag) {
+		if selectedFlowTags.contains(flow) {
+			selectedFlowTags.remove(flow)
+		} else {
+			selectedFlowTags.insert(flow)
+		}
+	}
+
+	private func toggleCategory(_ category: String) {
+		if selectedCategories.contains(category) {
+			selectedCategories.remove(category)
+		} else {
+			selectedCategories.insert(category)
+		}
+	}
+
+	private func normalizedCategory(for transaction: Transaction) -> String {
+		let trimmed = transaction.category.trimmingCharacters(in: .whitespacesAndNewlines)
+		if trimmed.isEmpty {
+			return transaction.amount >= 0 ? "收款" : "其他"
+		}
+		if trimmed == "收入" {
+			return "收款"
+		}
+		return trimmed
+	}
+
+	private func normalizeSelectedCategories() {
+		let validCategories = Set(visibleFilterCategories)
+		selectedCategories = selectedCategories.intersection(validCategories)
+	}
+
+	private func uniqueCategories(_ source: [String]) -> [String] {
+		var seen: Set<String> = []
+		return source.filter { seen.insert($0).inserted }
+	}
+
 	private func convertedAmount(_ transaction: Transaction) -> Double {
 		let source = CurrencyCode(rawValue: transaction.currencyCode) ?? .CNY
 		return CurrencyService.convert(transaction.amount, from: source, to: globalCurrency)
 	}
+}
 
+private struct AccountingFilterChip: View {
+	var title: String
+	var count: Int
+	var isSelected: Bool
+	var tint: Color
+	var action: () -> Void
+
+	var body: some View {
+		Button(action: action) {
+			HStack(spacing: 6) {
+				Text(title)
+					.font(.caption)
+					.fontWeight(isSelected ? .semibold : .regular)
+				Text("\(count)")
+					.font(.caption2)
+					.padding(.horizontal, 5)
+					.padding(.vertical, 1)
+					.background(isSelected ? Color.white.opacity(0.28) : Color.secondary.opacity(0.15))
+					.clipShape(Capsule())
+			}
+			.padding(.horizontal, 10)
+			.padding(.vertical, 5)
+			.background(isSelected ? tint : Color(nsColor: .controlBackgroundColor))
+			.foregroundStyle(isSelected ? .white : .primary)
+			.clipShape(Capsule())
+		}
+		.buttonStyle(.plain)
+	}
+}
+
+private struct AccountingFilterListSheet: View {
+	@Binding var isPresented: Bool
+	@Binding var selectedFlowTags: Set<AccountingFlowTag>
+	@Binding var selectedCategories: Set<String>
+
+	var flowCounts: [AccountingFlowTag: Int]
+	var categoryCounts: [String: Int]
+	var categories: [String]
+
+	@State private var searchText = ""
+
+	private var visibleCategories: [String] {
+		let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !keyword.isEmpty else { return categories }
+		return categories.filter { $0.localizedCaseInsensitiveContains(keyword) }
+	}
+
+	var body: some View {
+		VStack(spacing: 0) {
+			HStack {
+				Text("筛选分类")
+					.font(.headline)
+				Spacer()
+				Button("关闭") { isPresented = false }
+					.buttonStyle(.plain)
+					.foregroundStyle(.secondary)
+			}
+			.padding(.horizontal, 16)
+			.padding(.vertical, 12)
+
+			Divider()
+
+			TextField("搜索分类…", text: $searchText)
+				.textFieldStyle(.roundedBorder)
+				.padding(12)
+
+			List {
+				Section("收支类型") {
+					ForEach(AccountingFlowTag.allCases, id: \.self) { flow in
+						Button {
+							if selectedFlowTags.contains(flow) {
+								selectedFlowTags.remove(flow)
+							} else {
+								selectedFlowTags.insert(flow)
+							}
+						} label: {
+							HStack {
+								Text(flow.rawValue)
+								Spacer()
+								Text("\(flowCounts[flow] ?? 0)")
+									.foregroundStyle(.secondary)
+								if selectedFlowTags.contains(flow) {
+									Image(systemName: "checkmark")
+										.foregroundStyle(Color.accentColor)
+								}
+							}
+						}
+						.buttonStyle(.plain)
+					}
+				}
+
+				Section("分类") {
+					ForEach(visibleCategories, id: \.self) { category in
+						Button {
+							if selectedCategories.contains(category) {
+								selectedCategories.remove(category)
+							} else {
+								selectedCategories.insert(category)
+							}
+						} label: {
+							HStack {
+								Text(category)
+								Spacer()
+								Text("\(categoryCounts[category] ?? 0)")
+									.foregroundStyle(.secondary)
+								if selectedCategories.contains(category) {
+									Image(systemName: "checkmark")
+										.foregroundStyle(Color.accentColor)
+								}
+							}
+						}
+						.buttonStyle(.plain)
+					}
+				}
+			}
+
+			Divider()
+
+			HStack {
+				Button("清空筛选") {
+					selectedFlowTags.removeAll()
+					selectedCategories.removeAll()
+				}
+				.buttonStyle(.bordered)
+				Spacer()
+				Button("完成") { isPresented = false }
+					.buttonStyle(.borderedProminent)
+			}
+			.padding(16)
+		}
+		.frame(width: 380, height: 520)
+	}
 }
 
 private struct AccountingMetricCard: View {
@@ -241,7 +533,15 @@ private struct TransactionRowView: View {
 		if !transaction.streamName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
 			return transaction.streamName
 		}
-		return transaction.category.isEmpty ? "未命名" : transaction.category
+		return normalizedCategory
+	}
+
+	private var normalizedCategory: String {
+		let trimmed = transaction.category.trimmingCharacters(in: .whitespacesAndNewlines)
+		if trimmed.isEmpty {
+			return transaction.amount >= 0 ? "收款" : "其他"
+		}
+		return trimmed
 	}
 
 	var body: some View {
@@ -258,13 +558,13 @@ private struct TransactionRowView: View {
 				Text(displayTitle)
 					.font(.body)
 					.lineLimit(1)
-				if !transaction.category.isEmpty {
-					Text(transaction.category)
-						.font(.caption)
-						.foregroundStyle(.secondary)
-				}
+
+				Text(normalizedCategory)
+					.font(.caption)
+					.foregroundStyle(.secondary)
+
 				HStack(spacing: 6) {
-					Text(transaction.date, style: .date)
+					Text(AppDateFormatter.ymd(transaction.date))
 						.font(.caption2)
 						.foregroundStyle(.tertiary)
 					Text("·")
@@ -282,6 +582,7 @@ private struct TransactionRowView: View {
 				.font(.system(size: 18, weight: .bold))
 				.foregroundStyle(displayAmount >= 0 ? Color.green : Color.red)
 		}
+		.frame(maxWidth: .infinity, alignment: .leading)
 		.padding(.vertical, 4)
 	}
 }
@@ -301,7 +602,7 @@ struct AccountingTransactionDetailView: View {
 	@State private var isShowingCategoryPicker = false
 
 	private var categories: [String] {
-		AccountingCategories.defaults
+		isExpense ? AccountingCategoryCatalog.expenseCategories : AccountingCategoryCatalog.incomeCategories
 	}
 
 	private var transactionCurrency: CurrencyCode {
@@ -327,6 +628,12 @@ struct AccountingTransactionDetailView: View {
 					Text("收入").tag(false)
 				}
 				.pickerStyle(.segmented)
+				.onChange(of: isExpense) { _, newValue in
+					let valid = Set(newValue ? AccountingCategoryCatalog.expenseCategories : AccountingCategoryCatalog.incomeCategories)
+					if !valid.contains(category) {
+						category = defaultCategory(forExpense: newValue)
+					}
+				}
 
 				HStack(spacing: 10) {
 					Text(isExpense ? "-" : "+")
@@ -372,6 +679,10 @@ struct AccountingTransactionDetailView: View {
 					.textFieldStyle(.roundedBorder)
 
 				DatePicker("日期", selection: $date, displayedComponents: .date)
+					.datePickerStyle(.field)
+				Text("日期：\(AppDateFormatter.ymd(date))")
+					.font(.caption2)
+					.foregroundStyle(.secondary)
 
 				Button(role: .destructive) {
 					selectedTransaction = nil
@@ -400,10 +711,16 @@ struct AccountingTransactionDetailView: View {
 		}
 	}
 
+	private func defaultCategory(forExpense: Bool) -> String {
+		forExpense ? "其他" : "收款"
+	}
+
 	private func loadFromTransaction() {
 		amountText = String(format: "%.2f", abs(transaction.amount))
 		isExpense = transaction.amount < 0
-		category = transaction.category.isEmpty ? "其他" : transaction.category
+		let fallback = defaultCategory(forExpense: isExpense)
+		let rawCategory = transaction.category.trimmingCharacters(in: .whitespacesAndNewlines)
+		category = rawCategory.isEmpty ? fallback : rawCategory
 		title = transaction.title.isEmpty ? transaction.streamName : transaction.title
 		note = transaction.note
 		date = transaction.date
@@ -431,8 +748,9 @@ struct AccountingCategoryPickerSheet: View {
 
 	private var filteredCategories: [String] {
 		let source = categories.isEmpty ? ["其他"] : categories
-		guard !searchText.isEmpty else { return source }
-		return source.filter { $0.localizedCaseInsensitiveContains(searchText) }
+		let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !keyword.isEmpty else { return source }
+		return source.filter { $0.localizedCaseInsensitiveContains(keyword) }
 	}
 
 	var body: some View {
@@ -448,24 +766,24 @@ struct AccountingCategoryPickerSheet: View {
 			TextField("搜索分类…", text: $searchText)
 				.textFieldStyle(.roundedBorder)
 
-				List(filteredCategories, id: \.self) { (category: String) in
-					Button {
-						selectedCategory = category
-						isPresented = false
-					} label: {
-						HStack {
-							Text(category)
-							Spacer()
-							if selectedCategory == category {
-								Image(systemName: "checkmark")
-									.foregroundColor(.accentColor)
-							}
+			List(filteredCategories, id: \.self) { category in
+				Button {
+					selectedCategory = category
+					isPresented = false
+				} label: {
+					HStack {
+						Text(category)
+						Spacer()
+						if selectedCategory == category {
+							Image(systemName: "checkmark")
+								.foregroundColor(.accentColor)
 						}
 					}
-					.buttonStyle(.plain)
 				}
+				.buttonStyle(.plain)
+			}
 		}
 		.padding(16)
-		.frame(width: 320, height: 360)
+		.frame(width: 360, height: 460)
 	}
 }
