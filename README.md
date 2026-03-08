@@ -1,24 +1,26 @@
 # LifeOS
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 [![Release](https://img.shields.io/github/v/release/Epiphany-Leon/LifeOS?display_name=tag)](https://github.com/Epiphany-Leon/LifeOS/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-LifeOS 是一个基于 SwiftUI 的个人生活管理应用，围绕「收件箱、执行、生活、体征、知识、总览」六大模块，帮助你进行记录、规划与复盘。
+LifeOS is a SwiftUI-based personal life management app. It is built around six modules: Inbox, Execution, Lifestyle, Vitals, Knowledge, and Dashboard.
 
-## 下载与开箱即用
+## Download and Use
 
-### 普通用户（macOS）
+### For End Users (macOS)
 
-1. 打开 [Releases](https://github.com/Epiphany-Leon/LifeOS/releases)
-2. 下载最新版本的 `LifeOS-macos-vX.Y.Z.zip`
-3. 解压后得到 `LifeOS.app`
-4. 拖入 `Applications` 并启动
+1. Open [Releases](https://github.com/Epiphany-Leon/LifeOS/releases).
+2. Download the latest `LifeOS-macos-vX.Y.Z.zip`.
+3. Unzip it to get `LifeOS.app`.
+4. Move it to `Applications` and launch.
 
-说明：
-- GitHub 的 `Source code (zip/tar.gz)` 是源码，不是可直接运行的 App。
-- iOS 版本不通过 GitHub 直接分发安装包（通常走 App Store/TestFlight）。
+Notes:
+- GitHub `Source code (zip/tar.gz)` contains source code only, not a runnable app.
+- iOS builds are not distributed as direct install packages via GitHub (typically App Store/TestFlight).
 
-### 开发者（源码运行）
+### For Developers (Run from Source)
 
 ```bash
 git clone git@github.com:Epiphany-Leon/LifeOS.git
@@ -26,50 +28,50 @@ cd LifeOS
 open LifeOS.xcodeproj
 ```
 
-然后在 Xcode 里选择 `LifeOS` scheme，运行到目标模拟器或设备。
+Then select the `LifeOS` scheme in Xcode and run on your target simulator/device.
 
-## 核心模块
+## Modules
 
-- Inbox：快速记录与收件整理
-- Execution：任务与项目执行管理
-- Lifestyle：目标、财务、关系等生活模块
-- Vitals：体征与健康相关记录
-- Knowledge：笔记与知识整理
-- Dashboard：总览与归档视图
-- AI（可选）：分类、总结与建议能力
+- Inbox: quick capture and triage
+- Execution: tasks and project execution
+- Lifestyle: goals, accounting, and relationship management
+- Vitals: health/vitals tracking
+- Knowledge: notes and knowledge organization
+- Dashboard: overview and archive views
+- Optional AI features: classification, summary, and suggestions
 
-## 技术栈与平台
+## Tech Stack and Platforms
 
 - Swift + SwiftUI
-- Apple 原生能力（AuthenticationServices、Keychain 等）
-- 平台：iOS / iPadOS / macOS（以及相关模拟器配置）
+- Apple native APIs (AuthenticationServices, Keychain, etc.)
+- Platforms: iOS / iPadOS / macOS (plus corresponding simulators)
 
-## AI 与安全
+## AI and Security
 
-- 仓库不包含 API Key
-- API Key 默认保存在 Keychain
-- 请勿提交本地密钥、证书、签名文件或私有配置
+- No API keys are stored in this repository.
+- API keys are stored in Keychain by default in-app.
+- Do not commit local secrets, certificates, signing files, or private config.
 
-## 发布与版本节奏
+## Release Cadence
 
-- 当前首个公开版本：`v0.1.0`
-- 建议采用小步快发（例如 `v0.1.1`、`v0.1.2`）
-- 每次发布前请更新 `CHANGELOG.md`，并在 Release 中附带说明
+- Current first public release: `v0.1.0`
+- Recommended patch cadence: `v0.1.1`, `v0.1.2`, ...
+- Update `CHANGELOG.md` before each release and include clear release notes.
 
-## 仓库结构
+## Repository Structure
 
-- `LifeOS/`：应用源码与资源
-- `LifeOS.xcodeproj/`：Xcode 工程
-- `LifeOS/Docs/`：文档与发布草稿
-- `release/`：本地打包产物目录（已在 `.gitignore` 忽略）
+- `LifeOS/`: app source code and assets
+- `LifeOS.xcodeproj/`: Xcode project
+- `LifeOS/Docs/`: docs and release drafts
+- `release/`: local release artifacts (ignored via `.gitignore`)
 
-## 贡献指南
+## Contributing
 
-- 提交前请阅读 `CONTRIBUTING.md`
-- 社区行为准则见 `CODE_OF_CONDUCT.md`
-- Issue/PR 模板已在 `.github/` 提供
+- Read `CONTRIBUTING.md` before submitting changes.
+- Follow `CODE_OF_CONDUCT.md`.
+- Issue/PR templates are available under `.github/`.
 
-## 许可证
+## License
 
-本项目采用 **GNU General Public License v3.0 (GPL-3.0)**。
-详见 `LICENSE`。
+This project is licensed under **GNU General Public License v3.0 (GPL-3.0)**.
+See `LICENSE` for details.
