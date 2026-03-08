@@ -1948,23 +1948,6 @@
         }
       }
     },
-    "settings.menu.preferences" : {
-      "extractionState" : "stale",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Settings…"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "设置…"
-          }
-        }
-      }
-    },
     "sk-..." : {
 
     },
