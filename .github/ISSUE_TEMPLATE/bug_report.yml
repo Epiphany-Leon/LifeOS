@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a reproducible problem in LifeOS.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this bug. Please provide enough detail to reproduce it.
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: One-line description of the issue.
+      placeholder: App crashes when opening Knowledge note details.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps so maintainers can reproduce.
+      placeholder: |
+        1. Open app
+        2. Go to Knowledge
+        3. Click a note
+        4. Crash occurs
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: Note detail view should open normally.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: App crashes with a blank window.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App/release version
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Xcode version, macOS/iOS version, simulator/device.
+      placeholder: Xcode 16.x, macOS 15.x, iPhone 16 simulator
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste any relevant logs, stack traces, or screenshots.
+      render: shell
+    validations:
+      required: false

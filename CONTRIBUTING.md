@@ -64,6 +64,33 @@ xcodebuild -project LifeOS.xcodeproj -scheme LifeOS -configuration Debug -destin
 - Docs updated if needed
 - PR description explains scope, risk, and test evidence
 
+## v0.1.1 Fast Patch Cadence
+
+Use a short cycle for the next patch release:
+
+1. Create a fix branch from `main`:
+
+```bash
+git checkout main
+git pull
+git checkout -b fix/<short-description>
+```
+
+2. Keep each PR focused on one bug or one small improvement.
+3. Merge small PRs quickly after review.
+4. Update `CHANGELOG.md` under `[Unreleased]` for each merged fix.
+5. When ready to ship:
+
+```bash
+git checkout main
+git pull
+git tag -a v0.1.1 -m "LifeOS v0.1.1"
+git push origin main
+git push origin v0.1.1
+```
+
+6. Publish the release notes using the same process as `v0.1.0`.
+
 ## Review Expectations
 
 Maintainers may request changes before merge. Focus on correctness, clarity, and minimal scope.

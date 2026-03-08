@@ -1,5 +1,7 @@
 # LifeOS
 
+[![Release](https://img.shields.io/github/v/release/Epiphany-Leon/LifeOS?display_name=tag)](https://github.com/Epiphany-Leon/LifeOS/releases)
+
 LifeOS is a SwiftUI app for personal life management.
 
 It organizes daily information into focused modules so you can capture, plan, review, and act in one place.

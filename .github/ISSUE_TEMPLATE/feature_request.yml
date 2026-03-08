@@ -1,0 +1,41 @@
+name: Feature request
+description: Propose a new feature or improvement.
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Please describe the problem and expected outcome.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What user problem are you trying to solve?
+      placeholder: It is difficult to review overdue tasks quickly.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe your ideal behavior/UI.
+      placeholder: Add an "Overdue" quick filter in Execution.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      placeholder: Manual sorting is possible but slow.
+    validations:
+      required: false
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and impact
+      description: Which module(s) are affected? Any migration risk?
+      placeholder: Execution module only, low data risk.
+    validations:
+      required: false
