@@ -1,17 +1,38 @@
-# Xcode 产生的编译产物
+# Build artifacts
 build/
 DerivedData/
+.build/
 
-# 个人配置与状态
+# Xcode user-specific files
 *.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/
-*.xcodeproj/project.xcworkspace/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+
+# macOS files
 .DS_Store
 
-# SwiftData/Core Data 产生的本地临时数据库文件
+# SwiftData/Core Data local files
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
 
-# 敏感信息（如果你后续添加了 API Key 配置文件）
-*.env
+# Environment and local config
+.env
+.env.*
+!.env.example
+*.xcconfig.local
+**/Secrets.xcconfig
+
+# Credentials and signing files
+*.p12
+*.p8
+*.cer
+*.pem
+*.key
+*.mobileprovision
+*.provisionprofile
+
+# Local token/cache files
+ai_api_token.txt
