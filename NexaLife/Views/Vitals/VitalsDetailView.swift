@@ -2,7 +2,7 @@
 //  VitalsDetailView.swift
 //  NexaLife
 //
-//  Created by Lihong Gao on 2026-02-26.
+//  v0.2.0 — 严格按 WorkspaceTheme / WorkspaceCard 设计语言
 //
 
 import SwiftUI
@@ -11,6 +11,7 @@ import LocalAuthentication
 
 struct VitalsDetailView: View {
 	@Environment(\.modelContext) private var modelContext
+	@Environment(\.locale) private var locale
 	@Query(sort: \VitalsEntry.timestamp, order: .reverse) private var allEntries: [VitalsEntry]
 	@Binding var selectedEntry: VitalsEntry?
 	@Bindable var entry: VitalsEntry
@@ -24,149 +25,44 @@ struct VitalsDetailView: View {
 	var typeColor: Color {
 		switch entry.type {
 		case .coreCode:   return .purple
+		case .reflection: return .blue
+		case .emotion:    return .pink
 		case .treehol:    return .green
 		case .motivation: return .orange
 		}
 	}
 
+	private var accent: Color { typeColor }
+
 	var body: some View {
 		ScrollView {
-			VStack(alignment: .leading, spacing: 24) {
-
-				// 类型 + 时间
-				HStack {
-					Label(entry.type.rawValue, systemImage: typeIcon)
-						.font(.subheadline)
-						.padding(.horizontal, 10)
-						.padding(.vertical, 4)
-						.background(typeColor.opacity(0.1))
-						.foregroundStyle(typeColor)
-						.clipShape(Capsule())
-
-					if entry.isProtected {
-						Label("受保护", systemImage: "lock.fill")
-							.font(.caption)
-							.foregroundStyle(.secondary)
-					}
-
-					Spacer()
-
-					Text(AppDateFormatter.ymd(entry.timestamp))
-						.font(.caption)
-						.foregroundStyle(.tertiary)
-
-					Menu {
-						ForEach(VitalsEntryType.allCases, id: \.self) { type in
-							Button {
-								createEntry(type: type)
-							} label: {
-								Label(type.rawValue, systemImage: typeIcon(for: type))
-							}
-						}
-					} label: {
-						Label("新建", systemImage: "plus")
-					}
-					.buttonStyle(.bordered)
-				}
-
-				Divider()
+			VStack(alignment: .leading, spacing: 22) {
+				headerCard
 
 				if entry.type == .coreCode {
-					coreCategorySection
-					Divider()
+					coreCategoryCard
 				}
 
-				// 动力评分（仅 motivation 显示）
-				if entry.type == .motivation {
-					HStack(spacing: 6) {
-						Text("能量评分").font(.subheadline).foregroundStyle(.secondary)
-						HStack(spacing: 3) {
-							ForEach(1...5, id: \.self) { i in
-								Button {
-									entry.moodScore = i
-								} label: {
-									Image(systemName: i <= entry.moodScore ? "star.fill" : "star")
-										.foregroundStyle(i <= entry.moodScore ? Color.orange : Color.secondary)
-								}
-								.buttonStyle(.plain)
-							}
-						}
-					}
+				if entry.type == .motivation || entry.type == .emotion {
+					ratingCard
 				}
 
-				contentSection
+				contentCard
 
-				// AI 辅助区（核心守则专属）
-				if entry.type == .coreCode {
-					Divider()
-					VStack(alignment: .leading, spacing: 12) {
-						HStack {
-							Label("AI 辅助指导", systemImage: "sparkles")
-								.font(.headline)
-							Spacer()
-							Button {
-								loadAIGuidance()
-							} label: {
-								if isLoadingAI {
-									ProgressView().scaleEffect(0.7)
-								} else {
-									Label("获取建议", systemImage: "wand.and.stars")
-								}
-							}
-							.buttonStyle(.bordered)
-							.disabled(isLoadingAI)
-						}
-
-						if !aiGuidance.isEmpty {
-							Text(aiGuidance)
-								.font(.body)
-								.padding(14)
-								.background(Color.purple.opacity(0.06))
-								.clipShape(RoundedRectangle(cornerRadius: 10))
-						}
-					}
+				if entry.type == .coreCode || entry.type == .reflection || entry.type == .emotion {
+					aiCard
 				}
 
-				// 存档区（动力/灵感 & 树洞）
 				if entry.type != .coreCode {
-					Divider()
-					HStack(spacing: 12) {
-						Button {
-							archiveEntry(to: "Knowledge")
-						} label: {
-							Label(entry.isArchived ? "已存档" : "存入 Knowledge", systemImage: "book")
-								.frame(maxWidth: .infinity)
-						}
-						.buttonStyle(.bordered)
-						.tint(.blue)
-						.disabled(entry.isArchived)
-
-						Button {
-							archiveEntry(to: "Vitals")
-						} label: {
-							Label("存入 Vitals Review", systemImage: "sparkles")
-								.frame(maxWidth: .infinity)
-						}
-						.buttonStyle(.bordered)
-						.tint(.purple)
-						.disabled(entry.isArchived)
-					}
+					archiveCard
 				}
 
-				Divider()
-				Button(role: .destructive) {
-					attemptDeleteCurrentEntry()
-				} label: {
-					Label("删除记录", systemImage: "trash")
-						.frame(maxWidth: .infinity)
-				}
-				.buttonStyle(.bordered)
-
-				Spacer()
+				deleteCard
 			}
-			.padding(28)
+			.padding(.horizontal, 28)
+			.padding(.vertical, 24)
 		}
-		.navigationTitle(entry.type.rawValue)
+		.background(WorkspaceTheme.surface)
 		.onAppear {
 			normalizeEntryCategoryIfNeeded()
 			draftContent = entry.content
@@ -178,99 +74,294 @@ struct VitalsDetailView: View {
 		}
 	}
 
-	private var contentSection: some View {
-		VStack(alignment: .leading, spacing: 10) {
-			HStack {
-				Label("正文内容", systemImage: "doc.text")
-					.font(.headline)
-				Spacer()
-				if isEditingContent {
-					Button("取消") {
-						draftContent = entry.content
-						isEditingContent = false
-					}
-					.buttonStyle(.bordered)
-					.controlSize(.small)
+	// MARK: - Header
 
-					Button("保存") {
-						entry.content = draftContent
-						isEditingContent = false
+	private var headerCard: some View {
+		WorkspaceCard(accent: accent, padding: 18, cornerRadius: 22, shadowY: 8) {
+			HStack(alignment: .top, spacing: 14) {
+				WorkspaceIconBadge(icon: typeIcon, accent: accent, size: 38)
+				VStack(alignment: .leading, spacing: 6) {
+					HStack(spacing: 8) {
+						Text(entry.type.rawValue)
+							.font(.system(size: 17, weight: .bold, design: .rounded))
+							.foregroundStyle(WorkspaceTheme.strongText)
+						if entry.isProtected {
+							WorkspacePill(title: AppBrand.localized("受保护", "Protected", locale: locale), icon: "lock.fill", accent: .gray)
+						}
 					}
-					.buttonStyle(.borderedProminent)
-					.controlSize(.small)
-				} else {
-					Button("修改") {
-						draftContent = entry.content
-						isEditingContent = true
-					}
-					.buttonStyle(.bordered)
-					.controlSize(.small)
+					Text(AppDateFormatter.ymd(entry.timestamp))
+						.font(.caption)
+						.foregroundStyle(WorkspaceTheme.mutedText)
 				}
-			}
-
-			if isEditingContent {
-				TextEditor(text: $draftContent)
-					.font(.body)
-					.frame(minHeight: 180)
-					.scrollContentBackground(.hidden)
-					.padding(10)
-					.background(typeColor.opacity(0.04))
-					.clipShape(RoundedRectangle(cornerRadius: 10))
-			} else {
-				Text(entry.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "暂无内容" : entry.content)
-					.font(.body)
-					.frame(maxWidth: .infinity, alignment: .leading)
-					.padding(14)
-					.background(typeColor.opacity(0.05))
-					.clipShape(RoundedRectangle(cornerRadius: 10))
+				Spacer()
+				Menu {
+					ForEach(VitalsEntryType.allCases, id: \.self) { type in
+						Button {
+							createEntry(type: type)
+						} label: {
+							Label(type.rawValue, systemImage: typeIcon(for: type))
+						}
+					}
+				} label: {
+					HStack(spacing: 6) {
+						Image(systemName: "plus")
+							.font(.system(size: 11, weight: .semibold))
+						Text(AppBrand.localized("新建", "New", locale: locale))
+							.font(.caption.weight(.semibold))
+					}
+					.foregroundStyle(Color.white)
+					.padding(.horizontal, 12)
+					.padding(.vertical, 7)
+					.background(Capsule().fill(accent))
+				}
+				.menuStyle(.borderlessButton)
+				.menuIndicator(.hidden)
+				.fixedSize()
 			}
 		}
 	}
 
-	private var coreCategorySection: some View {
-		VStack(alignment: .leading, spacing: 10) {
-			HStack {
-				Label("守则分类", systemImage: "square.grid.2x2")
-					.font(.subheadline)
-					.foregroundStyle(.secondary)
+	// MARK: - Rating
+
+	private var ratingCard: some View {
+		WorkspaceCard(accent: accent, padding: 16, cornerRadius: 18, shadowY: 4) {
+			HStack(spacing: 12) {
+				Text(entry.type == .emotion
+					 ? AppBrand.localized("情绪强度", "Emotion intensity", locale: locale)
+					 : AppBrand.localized("能量评分", "Energy score", locale: locale))
+					.font(.system(size: 13, weight: .medium))
+					.foregroundStyle(WorkspaceTheme.mutedText)
 				Spacer()
-				if !coreCategoryOptions.isEmpty {
-					Menu("快捷选择") {
-						ForEach(coreCategoryOptions, id: \.self) { option in
-							Button(option) {
-								entry.category = option
-							}
+				HStack(spacing: 4) {
+					ForEach(1...5, id: \.self) { i in
+						Button {
+							entry.moodScore = i
+						} label: {
+							Image(systemName: i <= entry.moodScore ? "star.fill" : "star")
+								.font(.system(size: 16))
+								.foregroundStyle(i <= entry.moodScore ? accent : WorkspaceTheme.mutedText.opacity(0.4))
 						}
+						.buttonStyle(.plain)
 					}
-					.buttonStyle(.bordered)
-					.controlSize(.small)
 				}
 			}
+		}
+	}
 
-			TextField("输入分类，例如：决策原则、沟通原则、关系原则", text: $entry.category)
+	// MARK: - Content
+
+	private var contentCard: some View {
+		WorkspaceCard(accent: accent, padding: 18, cornerRadius: 22, shadowY: 6) {
+			VStack(alignment: .leading, spacing: 12) {
+				HStack(alignment: .top, spacing: 12) {
+					WorkspacePanelHeader(
+						title: AppBrand.localized("正文内容", "Content", locale: locale),
+						subtitle: isEditingContent
+							? AppBrand.localized("编辑模式 · 完成后点保存", "Editing · save when done", locale: locale)
+							: AppBrand.localized("点击修改进入编辑", "Tap edit to modify", locale: locale),
+						accent: accent,
+						icon: "doc.text"
+					)
+					Spacer()
+					if isEditingContent {
+						Button(AppBrand.localized("取消", "Cancel", locale: locale)) {
+							draftContent = entry.content
+							isEditingContent = false
+						}
+						.buttonStyle(.bordered)
+						.controlSize(.small)
+
+						Button(AppBrand.localized("保存", "Save", locale: locale)) {
+							entry.content = draftContent
+							isEditingContent = false
+						}
+						.buttonStyle(.borderedProminent)
+						.controlSize(.small)
+					} else {
+						WorkspaceActionButton(
+							title: AppBrand.localized("修改", "Edit", locale: locale),
+							icon: "pencil",
+							accent: accent,
+							isPrimary: false
+						) {
+							draftContent = entry.content
+							isEditingContent = true
+						}
+					}
+				}
+
+				if isEditingContent {
+					TextEditor(text: $draftContent)
+						.font(.system(size: 14))
+						.scrollContentBackground(.hidden)
+						.frame(minHeight: 180)
+						.padding(12)
+						.background(
+							RoundedRectangle(cornerRadius: 14, style: .continuous)
+								.fill(WorkspaceTheme.elevatedSurface)
+						)
+						.overlay(
+							RoundedRectangle(cornerRadius: 14, style: .continuous)
+								.stroke(accent.opacity(0.20), lineWidth: 1)
+						)
+				} else {
+					Text(entry.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+						 ? AppBrand.localized("暂无内容", "No content yet", locale: locale)
+						 : entry.content)
+						.font(.system(size: 14))
+						.foregroundStyle(WorkspaceTheme.strongText)
+						.frame(maxWidth: .infinity, alignment: .leading)
+						.padding(14)
+						.background(
+							RoundedRectangle(cornerRadius: 14, style: .continuous)
+								.fill(accent.opacity(0.05))
+						)
+						.overlay(
+							RoundedRectangle(cornerRadius: 14, style: .continuous)
+								.stroke(WorkspaceTheme.border, lineWidth: 1)
+						)
+				}
+			}
+		}
+	}
+
+	// MARK: - Core Category
+
+	private var coreCategoryCard: some View {
+		WorkspaceCard(accent: accent, padding: 18, cornerRadius: 22, shadowY: 4) {
+			VStack(alignment: .leading, spacing: 12) {
+				WorkspacePanelHeader(
+					title: AppBrand.localized("守则分类", "Principle Category", locale: locale),
+					subtitle: AppBrand.localized("如：决策原则 / 沟通原则 / 关系原则", "e.g. Decision · Communication · Relationships", locale: locale),
+					accent: accent,
+					icon: "square.grid.2x2"
+				)
+
+				TextField(
+					AppBrand.localized("输入分类", "Type a category", locale: locale),
+					text: $entry.category
+				)
 				.textFieldStyle(.roundedBorder)
-				.onSubmit {
-					normalizeEntryCategoryIfNeeded()
-				}
+				.onSubmit { normalizeEntryCategoryIfNeeded() }
 
-			if !coreCategoryOptions.isEmpty {
-				ScrollView(.horizontal, showsIndicators: false) {
-					HStack(spacing: 6) {
-						ForEach(coreCategoryOptions, id: \.self) { option in
-							Button(option) {
-								entry.category = option
+				if !coreCategoryOptions.isEmpty {
+					ScrollView(.horizontal, showsIndicators: false) {
+						HStack(spacing: 6) {
+							ForEach(coreCategoryOptions, id: \.self) { option in
+								let isActive = option == normalizedCoreCategory(entry.category)
+								Button {
+									entry.category = option
+								} label: {
+									Text(option)
+										.font(.caption.weight(.semibold))
+										.foregroundStyle(isActive ? Color.white : accent)
+										.padding(.horizontal, 10)
+										.padding(.vertical, 5)
+										.background(Capsule().fill(isActive ? accent : accent.opacity(0.10)))
+								}
+								.buttonStyle(.plain)
 							}
-							.buttonStyle(.plain)
-							.padding(.horizontal, 8)
-							.padding(.vertical, 4)
-							.background(option == normalizedCoreCategory(entry.category) ? Color.purple.opacity(0.18) : Color(nsColor: .controlBackgroundColor))
-							.foregroundStyle(option == normalizedCoreCategory(entry.category) ? Color.purple : .primary)
-							.clipShape(Capsule())
 						}
 					}
-					.padding(.vertical, 2)
 				}
 			}
+		}
+	}
+
+	// MARK: - AI
+
+	private var aiCard: some View {
+		WorkspaceCard(accent: .purple, padding: 18, cornerRadius: 22, shadowY: 6) {
+			VStack(alignment: .leading, spacing: 12) {
+				HStack(alignment: .top, spacing: 12) {
+					WorkspacePanelHeader(
+						title: AppBrand.localized("AI 辅助整理", "AI Assistance", locale: locale),
+						subtitle: AppBrand.localized("提取要点、生成结构化建议", "Extract key points and structured advice", locale: locale),
+						accent: .purple,
+						icon: "sparkles"
+					)
+					Button {
+						loadAIGuidance()
+					} label: {
+						HStack(spacing: 6) {
+							if isLoadingAI {
+								ProgressView().scaleEffect(0.6)
+								Text(AppBrand.localized("生成中…", "Generating…", locale: locale))
+									.font(.caption.weight(.semibold))
+							} else {
+								Image(systemName: "wand.and.stars")
+									.font(.system(size: 11, weight: .semibold))
+								Text(AppBrand.localized("获取建议", "Generate", locale: locale))
+									.font(.caption.weight(.semibold))
+							}
+						}
+						.foregroundStyle(Color.white)
+						.padding(.horizontal, 12)
+						.padding(.vertical, 7)
+						.background(Capsule().fill(Color.purple))
+					}
+					.buttonStyle(.plain)
+					.disabled(isLoadingAI)
+				}
+
+				if !aiGuidance.isEmpty {
+					Text(aiGuidance)
+						.font(.system(size: 13))
+						.foregroundStyle(WorkspaceTheme.strongText)
+						.padding(14)
+						.frame(maxWidth: .infinity, alignment: .leading)
+						.background(
+							RoundedRectangle(cornerRadius: 14, style: .continuous)
+								.fill(Color.purple.opacity(0.06))
+						)
+						.overlay(
+							RoundedRectangle(cornerRadius: 14, style: .continuous)
+								.stroke(Color.purple.opacity(0.18), lineWidth: 1)
+						)
+				}
+			}
+		}
+	}
+
+	// MARK: - Archive
+
+	private var archiveCard: some View {
+		WorkspaceCard(accent: accent, padding: 16, cornerRadius: 18, shadowY: 4) {
+			HStack(spacing: 10) {
+				WorkspaceActionButton(
+					title: entry.isArchived
+						? AppBrand.localized("已存档", "Archived", locale: locale)
+						: AppBrand.localized("存入 Knowledge", "Save to Knowledge", locale: locale),
+					icon: "book",
+					accent: WorkspaceTheme.moduleAccent(for: .knowledge),
+					isPrimary: false
+				) { archiveEntry(to: "Knowledge") }
+
+				WorkspaceActionButton(
+					title: AppBrand.localized("存入 Vitals Review", "Save to Vitals Review", locale: locale),
+					icon: "sparkles",
+					accent: .purple,
+					isPrimary: false
+				) { archiveEntry(to: "Vitals") }
+
+				Spacer()
+			}
+			.opacity(entry.isArchived ? 0.55 : 1)
+			.allowsHitTesting(!entry.isArchived)
+		}
+	}
+
+	// MARK: - Delete
+
+	private var deleteCard: some View {
+		HStack {
+			Spacer()
+			WorkspaceActionButton(
+				title: AppBrand.localized("删除记录", "Delete entry", locale: locale),
+				icon: "trash",
+				accent: .red,
+				isPrimary: false
+			) { attemptDeleteCurrentEntry() }
 		}
 	}
 
@@ -285,6 +376,8 @@ struct VitalsDetailView: View {
 	private func typeIcon(for type: VitalsEntryType) -> String {
 		switch type {
 		case .coreCode:   return "shield.lefthalf.filled"
+		case .reflection: return "book.closed"
+		case .emotion:    return "heart.text.square"
 		case .treehol:    return "tree"
 		case .motivation: return "bolt.heart"
 		}
@@ -297,7 +390,7 @@ struct VitalsDetailView: View {
 			type: type,
 			category: type == .coreCode ? "未分类" : "",
 			isProtected: isProtected,
-			moodScore: type == .motivation ? 3 : 0
+			moodScore: type == .motivation || type == .emotion ? 3 : 0
 		)
 		modelContext.insert(newEntry)
 		selectedEntry = newEntry
@@ -342,13 +435,12 @@ struct VitalsDetailView: View {
 		}
 	}
 
-	// MARK: - AI 辅助
 	private func loadAIGuidance() {
 		isLoadingAI = true
 		Task {
 			let guidance = await aiService.generateReport(
 				entries: [entry.content],
-				type: "核心守则指导"
+				type: "\(entry.type.rawValue)整理"
 			)
 			await MainActor.run {
 				aiGuidance = guidance
@@ -357,7 +449,6 @@ struct VitalsDetailView: View {
 		}
 	}
 
-	// MARK: - 存档
 	private func archiveEntry(to destination: String) {
 		let note = Note(
 			title: "【Vitals 存档】\(entry.type.rawValue)",

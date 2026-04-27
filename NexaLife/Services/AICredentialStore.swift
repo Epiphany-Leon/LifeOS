@@ -33,72 +33,49 @@ enum AICredentialStore {
 	private static let legacyFallbackFolderName = AppBrand.legacyWorkspaceFolderName
 	private static let tokenFileName = "ai_api_token.txt"
 
-	static var mode: APITokenStorageMode {
-		let raw = UserDefaults.standard.string(forKey: storageModeKey) ?? APITokenStorageMode.keychain.rawValue
-		return APITokenStorageMode(rawValue: raw) ?? .keychain
-	}
+	/// Storage mode is fixed to local file. The enum is kept around for legacy
+	/// migration purposes but the picker is no longer surfaced in the UI.
+	static var mode: APITokenStorageMode { .localFile }
 
 	static func bootstrapSecurityDefaults() {
-		if UserDefaults.standard.object(forKey: storageModeKey) == nil {
-			UserDefaults.standard.set(APITokenStorageMode.keychain.rawValue, forKey: storageModeKey)
-		}
+		// Pin storage mode to local file, regardless of any legacy preference.
+		UserDefaults.standard.set(APITokenStorageMode.localFile.rawValue, forKey: storageModeKey)
 
-		guard !UserDefaults.standard.bool(forKey: migratedLegacyTokenKey) else { return }
-		defer {
-			UserDefaults.standard.set(true, forKey: migratedLegacyTokenKey)
-		}
-
+		// One-shot migration: if a token still lives in the Keychain (from
+		// older builds), copy it to the local file and drop the Keychain copy.
 		migrateLegacyKeychainServiceIfNeeded()
-
 		let keychainToken = (KeychainHelper.shared.read(service: service, account: account) ?? "")
 			.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard keychainToken.isEmpty else { return }
-
-		let localToken = (readFromLocalFile() ?? "")
-			.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !localToken.isEmpty else { return }
-
-		if KeychainHelper.shared.save(service: service, account: account, value: localToken) {
-			AppLogger.info("Migrated legacy local token to Keychain.", category: "security")
-		}
-	}
-
-	static func updateStorageMode(_ newMode: APITokenStorageMode) {
-		let previousMode = mode
-		UserDefaults.standard.set(newMode.rawValue, forKey: storageModeKey)
-		guard previousMode != newMode else { return }
-
-		let existing = readAPIKey(from: previousMode)
-			.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !existing.isEmpty else { return }
-
-		saveAPIKey(existing, to: newMode)
-		switch newMode {
-		case .keychain:
-			removeLocalFileIfExists()
-		case .localFile:
+		if !keychainToken.isEmpty {
+			let localToken = (readFromLocalFile() ?? "")
+				.trimmingCharacters(in: .whitespacesAndNewlines)
+			if localToken.isEmpty {
+				saveToLocalFile(keychainToken)
+				AppLogger.info("Migrated AI token from Keychain to local file.", category: "security")
+			}
 			_ = KeychainHelper.shared.delete(service: service, account: account)
+			_ = KeychainHelper.shared.delete(service: legacyService, account: account)
 		}
+
+		UserDefaults.standard.set(true, forKey: migratedLegacyTokenKey)
 	}
 
 	static func saveAPIKey(_ key: String) {
 		let normalized = key.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !normalized.isEmpty else { return }
-		saveAPIKey(normalized, to: mode)
+		saveToLocalFile(normalized)
+		// Mirror the cleanup in case any legacy Keychain entry lingered.
+		_ = KeychainHelper.shared.delete(service: service, account: account)
+		_ = KeychainHelper.shared.delete(service: legacyService, account: account)
 	}
 
 	static func readAPIKey() -> String {
-		readAPIKey(from: mode)
+		(readFromLocalFile() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 	}
 
-		static func storageLocationDescription() -> String {
-			switch mode {
-			case .keychain:
-				return "系统钥匙串 (Service: \(service), Account: \(account))"
-			case .localFile:
-				return writableLocalTokenFileURL().path
-			}
-		}
+	static func storageLocationDescription() -> String {
+		writableLocalTokenFileURL().path
+	}
 
 		static func localFileURL() -> URL {
 			writableLocalTokenFileURL()
@@ -113,33 +90,7 @@ enum AICredentialStore {
 		_ = KeychainHelper.shared.delete(service: legacyService, account: account)
 		removeLocalFileIfExists()
 		UserDefaults.standard.removeObject(forKey: localFilePathKey)
-		UserDefaults.standard.set(APITokenStorageMode.keychain.rawValue, forKey: storageModeKey)
-	}
-
-	private static func saveAPIKey(_ key: String, to mode: APITokenStorageMode) {
-		switch mode {
-		case .keychain:
-			_ = KeychainHelper.shared.save(service: service, account: account, value: key)
-			_ = KeychainHelper.shared.delete(service: legacyService, account: account)
-			removeLocalFileIfExists()
-		case .localFile:
-			saveToLocalFile(key)
-			_ = KeychainHelper.shared.delete(service: service, account: account)
-			_ = KeychainHelper.shared.delete(service: legacyService, account: account)
-		}
-	}
-
-	private static func readAPIKey(from mode: APITokenStorageMode) -> String {
-		switch mode {
-		case .keychain:
-			if let current = KeychainHelper.shared.read(service: service, account: account),
-			   !current.isEmpty {
-				return current
-			}
-			return KeychainHelper.shared.read(service: legacyService, account: account) ?? ""
-		case .localFile:
-			return readFromLocalFile() ?? ""
-		}
+		UserDefaults.standard.set(APITokenStorageMode.localFile.rawValue, forKey: storageModeKey)
 	}
 
 	private static func saveToLocalFile(_ key: String) {

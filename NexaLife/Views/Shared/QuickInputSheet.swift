@@ -19,7 +19,7 @@ struct QuickInputSheet: View {
 	@State private var inputText:       String     = ""
 	@State private var suggestedModule: AppModule? = nil
 	@State private var isAnalyzing:     Bool       = false
-	@State private var debounceTask:    _Concurrency.Task<Void, Never>? = nil
+	@State private var debounceTask:    Task<Void, Never>? = nil
 	@State private var aiRequestID:     Int        = 0
 
 	var body: some View {
@@ -64,9 +64,9 @@ struct QuickInputSheet: View {
 							isAnalyzing = false
 							return
 						}
-						debounceTask = _Concurrency.Task {
-							try? await _Concurrency.Task.sleep(nanoseconds: 800_000_000)
-							guard !_Concurrency.Task.isCancelled else { return }
+						debounceTask = Task {
+							try? await Task.sleep(nanoseconds: 800_000_000)
+							guard !Task.isCancelled else { return }
 							await triggerAI(text: newValue, requestID: currentRequestID)
 						}
 					}
@@ -110,7 +110,7 @@ struct QuickInputSheet: View {
 			HStack(spacing: 12) {
 				// 手动选择归属
 				Menu {
-					ForEach(AppModule.allCases.filter { $0 != .dashboard }, id: \.self) { m in
+					ForEach(AppModule.allCases.filter { $0 != .dashboard && $0 != .trash }, id: \.self) { m in
 						Button {
 							applyManualSelection(m)
 						} label: {

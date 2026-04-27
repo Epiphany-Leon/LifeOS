@@ -43,6 +43,7 @@ private enum AccountingFlowTag: String, CaseIterable, Hashable {
 
 struct AccountingView: View {
 	@EnvironmentObject private var appState: AppState
+	@Environment(\.modelContext) private var modelContext
 	@Query(sort: \Transaction.date, order: .reverse) private var transactions: [Transaction]
 
 	@Binding var selectedTransaction: Transaction?
@@ -138,57 +139,101 @@ struct AccountingView: View {
 		monthlyIncome - monthlySpent
 	}
 
+	private var remainingBudget: Double {
+		monthlyBudget - monthlySpent
+	}
+
+	private var monthlyUsageText: String {
+		guard monthlyBudget > 0 else { return "未设置预算" }
+		let ratio = min(max(monthlySpent / monthlyBudget, 0), 9.99)
+		return String(format: "%.0f%% 已使用", ratio * 100)
+	}
+
 	var body: some View {
 		VStack(spacing: 0) {
-			header
-
-			Divider()
-
 			filterTagBar
 
 			searchBar
 
-			Divider()
-
-			List(selection: $selectedTransaction) {
-				if filteredTransactions.isEmpty {
-					ContentUnavailableView(
-						"还没有记录",
-						systemImage: "yensign.circle",
-						description: Text("在右侧详情新建后，可在这里按分类筛选")
-					)
-				} else {
-					ForEach(filteredTransactions) { tx in
-						TransactionRowView(
-							transaction: tx,
-							displayAmount: convertedAmount(tx),
-							displayCurrency: globalCurrency
+			ScrollView {
+				VStack(alignment: .leading, spacing: 18) {
+					LazyVGrid(
+						columns: [GridItem(.adaptive(minimum: 210, maximum: 280), spacing: 14)],
+						alignment: .leading,
+						spacing: 14
+					) {
+						WorkspaceMetricTile(
+							title: "预算余量",
+							value: CurrencyService.format(remainingBudget, currency: globalCurrency, showSign: true),
+							subtitle: monthlyUsageText,
+							icon: "wallet.bifold",
+							accent: .blue
 						)
-						.tag(tx)
-						.listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+						WorkspaceMetricTile(
+							title: "本月支出",
+							value: CurrencyService.format(monthlySpent, currency: globalCurrency, showSign: false),
+							subtitle: "本月所有支出累计",
+							icon: "arrow.up.right.circle",
+							accent: .red
+						)
+						WorkspaceMetricTile(
+							title: "本月收入",
+							value: CurrencyService.format(monthlyIncome, currency: globalCurrency, showSign: false),
+							subtitle: "本月所有收入累计",
+							icon: "arrow.down.left.circle",
+							accent: .green
+						)
+						WorkspaceMetricTile(
+							title: "净收支",
+							value: CurrencyService.format(monthlyBalance, currency: globalCurrency, showSign: true),
+							subtitle: "本月收入减去本月支出",
+							icon: "equal.circle",
+							accent: .teal
+						)
 					}
+
+					ledgerWorkspacePanel
 				}
+				.padding(.horizontal, 16)
+				.padding(.vertical, 18)
+				.frame(maxWidth: .infinity, alignment: .leading)
 			}
 		}
-		.sheet(isPresented: $isShowingFilterList) {
-			AccountingFilterListSheet(
-				isPresented: $isShowingFilterList,
-				selectedFlowTags: $selectedFlowTags,
-				selectedCategories: $selectedCategories,
-				flowCounts: flowCounts,
-				categoryCounts: categoryCounts,
-				categories: visibleFilterCategories
-			)
+		.onReceive(NotificationCenter.default.publisher(for: .nexaLifeLifestyleCreateTransaction)) { _ in
+			createTransaction()
 		}
-		.onChange(of: transactions.map(\.id)) { _, ids in
-			if let selected = selectedTransaction, !ids.contains(selected.id) {
-				selectedTransaction = nil
+			.sheet(isPresented: $isShowingFilterList) {
+				AccountingFilterListSheet(
+					isPresented: $isShowingFilterList,
+					selectedFlowTags: $selectedFlowTags,
+					selectedCategories: $selectedCategories,
+					flowCounts: flowCounts,
+					categoryCounts: categoryCounts,
+					categories: visibleFilterCategories
+				)
 			}
-			normalizeSelectedCategories()
-		}
-		.onChange(of: selectedFlowTags) { _, _ in
-			normalizeSelectedCategories()
-		}
+			.onChange(of: transactions.map(\.id)) { _, ids in
+				if let selected = selectedTransaction, !ids.contains(selected.id) {
+					selectedTransaction = nil
+				}
+				normalizeSelectedCategories()
+			}
+			.onChange(of: selectedFlowTags) { _, _ in
+				normalizeSelectedCategories()
+			}
+	}
+
+	private func createTransaction() {
+		let transaction = Transaction(
+			amount: 0,
+			category: "其他",
+			title: "新条目",
+			note: "",
+			date: .now,
+			currencyCode: appState.selectedCurrencyCode.rawValue
+		)
+		modelContext.insert(transaction)
+		selectedTransaction = transaction
 	}
 
 	private var filterTagBar: some View {
@@ -230,20 +275,27 @@ struct AccountingView: View {
 				.padding(.vertical, 2)
 			}
 
-			Button {
-				isShowingFilterList = true
-			} label: {
-				Image(systemName: "list.bullet")
-					.font(.subheadline)
-					.padding(.horizontal, 10)
-					.padding(.vertical, 7)
-					.background(Color(nsColor: .controlBackgroundColor))
-					.clipShape(Capsule())
-			}
-			.buttonStyle(.plain)
+			Image(systemName: "list.bullet")
+				.font(.subheadline)
+				.padding(.horizontal, 10)
+				.padding(.vertical, 7)
+				.background(WorkspaceTheme.elevatedSurface)
+				.overlay(
+					Capsule()
+						.stroke(WorkspaceTheme.border, lineWidth: 1)
+				)
+				.clipShape(Capsule())
+				.contentShape(Capsule())
+				.onTapGesture {
+					isShowingFilterList = true
+				}
 		}
 		.padding(.horizontal, 12)
 		.padding(.vertical, 8)
+	}
+
+	private func isSelected(_ transaction: Transaction) -> Bool {
+		selectedTransaction?.id == transaction.id
 	}
 
 	private var searchBar: some View {
@@ -253,54 +305,24 @@ struct AccountingView: View {
 			TextField("搜索分类、标题、备注、金额…", text: $searchText)
 				.textFieldStyle(.plain)
 			if !searchText.isEmpty {
-				Button {
-					searchText = ""
-				} label: {
-					Image(systemName: "xmark.circle.fill")
-						.foregroundStyle(.secondary)
-				}
-				.buttonStyle(.plain)
+				Image(systemName: "xmark.circle.fill")
+					.foregroundStyle(.secondary)
+					.contentShape(Rectangle())
+					.onTapGesture {
+						searchText = ""
+					}
 			}
 		}
-		.padding(.horizontal, 10)
-		.padding(.vertical, 8)
-		.background(Color(nsColor: .controlBackgroundColor))
-		.clipShape(RoundedRectangle(cornerRadius: 8))
+		.padding(.horizontal, 14)
+		.padding(.vertical, 12)
+		.background(WorkspaceTheme.elevatedSurface)
+		.clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+		.overlay(
+			RoundedRectangle(cornerRadius: 16, style: .continuous)
+				.stroke(WorkspaceTheme.border, lineWidth: 1)
+		)
 		.padding(.horizontal, 12)
 		.padding(.bottom, 8)
-	}
-
-	private var header: some View {
-		VStack(spacing: 10) {
-			LazyVGrid(
-				columns: [GridItem(.flexible()), GridItem(.flexible())],
-				spacing: 8
-			) {
-				AccountingMetricCard(
-					title: "月度预算",
-					value: CurrencyService.format(monthlyBudget, currency: globalCurrency, showSign: false),
-					color: .blue
-				)
-				AccountingMetricCard(
-					title: "实际支出",
-					value: CurrencyService.format(monthlySpent, currency: globalCurrency, showSign: false),
-					color: .red
-				)
-				AccountingMetricCard(
-					title: "收入",
-					value: CurrencyService.format(monthlyIncome, currency: globalCurrency, showSign: false),
-					color: .green
-				)
-				AccountingMetricCard(
-					title: "净收支",
-					value: CurrencyService.format(monthlyBalance, currency: globalCurrency),
-					color: monthlyBalance >= 0 ? .teal : .orange
-				)
-			}
-		}
-		.padding(.horizontal, 12)
-		.padding(.vertical, 10)
-		.background(Color(nsColor: .windowBackgroundColor))
 	}
 
 	private var flowCounts: [AccountingFlowTag: Int] {
@@ -357,6 +379,51 @@ struct AccountingView: View {
 		let source = CurrencyCode(rawValue: transaction.currencyCode) ?? .CNY
 		return CurrencyService.convert(transaction.amount, from: source, to: globalCurrency)
 	}
+
+	private var ledgerWorkspacePanel: some View {
+		WorkspaceCard(accent: WorkspaceTheme.moduleAccent(for: .lifestyle), padding: 20, cornerRadius: 24, shadowY: 8) {
+			VStack(alignment: .leading, spacing: 14) {
+				WorkspacePanelHeader(
+					title: "Ledger",
+					subtitle: searchText.isEmpty ? "当前筛选下可见条目" : "搜索结果中的条目数",
+					accent: WorkspaceTheme.moduleAccent(for: .lifestyle),
+					icon: "yensign.circle",
+					value: "\(filteredTransactions.count)"
+				)
+
+				if filteredTransactions.isEmpty {
+					ContentUnavailableView(
+						"还没有记录",
+						systemImage: "yensign.circle",
+						description: Text("点击右上角新建财务条目后，可在这里按分类筛选")
+					)
+					.frame(maxWidth: .infinity)
+					.padding(.vertical, 40)
+				} else {
+					LazyVStack(alignment: .leading, spacing: 12) {
+						ForEach(filteredTransactions) { tx in
+							WorkspaceSelectableCard(
+								accent: WorkspaceTheme.moduleAccent(for: .lifestyle),
+								isSelected: isSelected(tx),
+								cornerRadius: 18,
+								padding: 14
+							) {
+								TransactionRowView(
+									transaction: tx,
+									displayAmount: convertedAmount(tx),
+									displayCurrency: globalCurrency
+								)
+							}
+							.contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+							.onTapGesture {
+								selectedTransaction = tx
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 private struct AccountingFilterChip: View {
@@ -367,25 +434,28 @@ private struct AccountingFilterChip: View {
 	var action: () -> Void
 
 	var body: some View {
-		Button(action: action) {
-			HStack(spacing: 6) {
-				Text(title)
-					.font(.caption)
-					.fontWeight(isSelected ? .semibold : .regular)
-				Text("\(count)")
-					.font(.caption2)
-					.padding(.horizontal, 5)
-					.padding(.vertical, 1)
-					.background(isSelected ? Color.white.opacity(0.28) : Color.secondary.opacity(0.15))
-					.clipShape(Capsule())
-			}
-			.padding(.horizontal, 10)
-			.padding(.vertical, 5)
-			.background(isSelected ? tint : Color(nsColor: .controlBackgroundColor))
-			.foregroundStyle(isSelected ? .white : .primary)
-			.clipShape(Capsule())
+		HStack(spacing: 6) {
+			Text(title)
+				.font(.caption)
+				.fontWeight(isSelected ? .semibold : .regular)
+			Text("\(count)")
+				.font(.caption2)
+				.padding(.horizontal, 5)
+				.padding(.vertical, 1)
+				.background(isSelected ? Color.white.opacity(0.28) : Color.secondary.opacity(0.15))
+				.clipShape(Capsule())
 		}
-		.buttonStyle(.plain)
+		.padding(.horizontal, 10)
+		.padding(.vertical, 5)
+		.background(isSelected ? tint : Color(nsColor: .controlBackgroundColor))
+		.foregroundStyle(isSelected ? .white : .primary)
+		.overlay(
+			Capsule()
+				.stroke(isSelected ? tint : WorkspaceTheme.border, lineWidth: 1)
+		)
+		.clipShape(Capsule())
+		.contentShape(Capsule())
+		.onTapGesture(perform: action)
 	}
 }
 
@@ -493,31 +563,6 @@ private struct AccountingFilterListSheet: View {
 	}
 }
 
-private struct AccountingMetricCard: View {
-	var title: String
-	var value: String
-	var color: Color
-
-	var body: some View {
-		VStack(alignment: .leading, spacing: 4) {
-			Text(title)
-				.font(.caption)
-				.foregroundStyle(.secondary)
-				.lineLimit(1)
-			Text(value)
-				.font(.system(size: 20, weight: .bold))
-				.foregroundStyle(color)
-				.lineLimit(1)
-				.minimumScaleFactor(0.75)
-		}
-		.frame(maxWidth: .infinity, alignment: .leading)
-		.padding(.horizontal, 10)
-		.padding(.vertical, 8)
-		.background(color.opacity(0.08))
-		.clipShape(RoundedRectangle(cornerRadius: 10))
-	}
-}
-
 private struct TransactionRowView: View {
 	var transaction: Transaction
 	var displayAmount: Double
@@ -545,45 +590,56 @@ private struct TransactionRowView: View {
 	}
 
 	var body: some View {
-		HStack(spacing: 12) {
-			ZStack {
-				Circle()
-					.fill(transaction.amount >= 0 ? Color.green.opacity(0.12) : Color.red.opacity(0.12))
-					.frame(width: 36, height: 36)
-				Image(systemName: transaction.amount >= 0 ? "plus.circle" : "minus.circle")
-					.foregroundStyle(transaction.amount >= 0 ? Color.green : Color.red)
-			}
-
-			VStack(alignment: .leading, spacing: 3) {
-				Text(displayTitle)
-					.font(.body)
-					.lineLimit(1)
-
-				Text(normalizedCategory)
-					.font(.caption)
-					.foregroundStyle(.secondary)
-
-				HStack(spacing: 6) {
-					Text(AppDateFormatter.ymd(transaction.date))
-						.font(.caption2)
-						.foregroundStyle(.tertiary)
-					Text("·")
-						.font(.caption2)
-						.foregroundStyle(.tertiary)
-					Text(sourceCurrency.rawValue)
-						.font(.caption2)
-						.foregroundStyle(.tertiary)
+		VStack(alignment: .leading, spacing: 10) {
+			HStack(alignment: .top, spacing: 12) {
+				ZStack {
+					Circle()
+						.fill(transaction.amount >= 0 ? Color.green.opacity(0.12) : Color.red.opacity(0.12))
+						.frame(width: 36, height: 36)
+					Image(systemName: transaction.amount >= 0 ? "plus.circle" : "minus.circle")
+						.foregroundStyle(transaction.amount >= 0 ? Color.green : Color.red)
 				}
+
+				VStack(alignment: .leading, spacing: 4) {
+					Text(displayTitle)
+						.font(.body.weight(.semibold))
+						.foregroundStyle(WorkspaceTheme.strongText)
+						.lineLimit(1)
+
+					HStack(spacing: 6) {
+						Text(normalizedCategory)
+							.font(.caption2.weight(.semibold))
+							.padding(.horizontal, 7)
+							.padding(.vertical, 3)
+							.background((transaction.amount >= 0 ? Color.green : Color.orange).opacity(0.12))
+							.foregroundStyle(transaction.amount >= 0 ? Color.green : Color.orange)
+							.clipShape(Capsule())
+
+						Text(AppDateFormatter.ymd(transaction.date))
+							.font(.caption2)
+							.foregroundStyle(.tertiary)
+
+						Text(sourceCurrency.rawValue)
+							.font(.caption2)
+							.foregroundStyle(.tertiary)
+					}
+				}
+
+				Spacer()
+
+				Text(CurrencyService.format(displayAmount, currency: displayCurrency))
+					.font(.system(size: 18, weight: .bold, design: .rounded))
+					.foregroundStyle(displayAmount >= 0 ? Color.green : Color.red)
 			}
 
-			Spacer()
-
-			Text(CurrencyService.format(displayAmount, currency: displayCurrency))
-				.font(.system(size: 18, weight: .bold))
-				.foregroundStyle(displayAmount >= 0 ? Color.green : Color.red)
+			if !transaction.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+				Text(transaction.note)
+					.font(.caption)
+					.foregroundStyle(WorkspaceTheme.mutedText)
+					.lineLimit(2)
+			}
 		}
 		.frame(maxWidth: .infinity, alignment: .leading)
-		.padding(.vertical, 4)
 	}
 }
 
@@ -591,6 +647,7 @@ struct AccountingTransactionDetailView: View {
 	@Environment(\.modelContext) private var modelContext
 	@Binding var selectedTransaction: Transaction?
 	@Bindable var transaction: Transaction
+	@StateObject private var aiService = AIService()
 
 	@State private var amountText: String = ""
 	@State private var isExpense: Bool = true
@@ -600,6 +657,9 @@ struct AccountingTransactionDetailView: View {
 	@State private var date: Date = .now
 	@State private var currencyCode: String = CurrencyCode.CNY.rawValue
 	@State private var isShowingCategoryPicker = false
+	@State private var aiSuggestedCategory: String? = nil
+	@State private var isAICategorizing: Bool = false
+	@State private var categoryDebounceTask: Task<Void, Never>? = nil
 
 	private var categories: [String] {
 		isExpense ? AccountingCategoryCatalog.expenseCategories : AccountingCategoryCatalog.incomeCategories
@@ -655,28 +715,63 @@ struct AccountingTransactionDetailView: View {
 				}
 
 				LabeledContent("分类") {
-					Button {
-						isShowingCategoryPicker = true
-					} label: {
-						HStack {
-							Text(category.isEmpty ? "选择分类" : category)
-							Spacer()
-							Image(systemName: "chevron.down")
+					VStack(alignment: .trailing, spacing: 6) {
+						Button {
+							isShowingCategoryPicker = true
+						} label: {
+							HStack {
+								Text(category.isEmpty ? "选择分类" : category)
+								Spacer()
+								Image(systemName: "chevron.down")
+							}
+							.padding(.horizontal, 10)
+							.padding(.vertical, 6)
+							.background(Color(nsColor: .controlBackgroundColor))
+							.clipShape(RoundedRectangle(cornerRadius: 8))
 						}
-						.padding(.horizontal, 10)
-						.padding(.vertical, 6)
-						.background(Color(nsColor: .controlBackgroundColor))
-						.clipShape(RoundedRectangle(cornerRadius: 8))
+						.buttonStyle(.plain)
+
+						// AI suggestion chip
+						if isAICategorizing {
+							HStack(spacing: 4) {
+								ProgressView().scaleEffect(0.6)
+								Text("AI 分析中…")
+									.font(.caption)
+									.foregroundStyle(.secondary)
+							}
+						} else if let suggested = aiSuggestedCategory, suggested != category {
+							Button {
+								category = suggested
+								aiSuggestedCategory = nil
+							} label: {
+								HStack(spacing: 4) {
+									Image(systemName: "sparkles")
+										.font(.caption)
+									Text("AI 建议：\(suggested)")
+										.font(.caption)
+									Text("点击采用")
+										.font(.caption)
+										.foregroundStyle(.secondary)
+								}
+								.padding(.horizontal, 8)
+								.padding(.vertical, 4)
+								.background(Color.purple.opacity(0.08))
+								.foregroundStyle(.purple)
+								.clipShape(RoundedRectangle(cornerRadius: 6))
+							}
+							.buttonStyle(.plain)
+						}
 					}
-					.buttonStyle(.plain)
 				}
 
 				TextField("标题", text: $title)
 					.textFieldStyle(.roundedBorder)
+					.onChange(of: title) { _, _ in scheduleCategoryAI() }
 
 				TextField("备注", text: $note, axis: .vertical)
 					.lineLimit(3...5)
 					.textFieldStyle(.roundedBorder)
+					.onChange(of: note) { _, _ in scheduleCategoryAI() }
 
 				DatePicker("日期", selection: $date, displayedComponents: .date)
 					.datePickerStyle(.field)
@@ -705,9 +800,18 @@ struct AccountingTransactionDetailView: View {
 		}
 		.onAppear {
 			loadFromTransaction()
+			scheduleCategoryAI()
 		}
 		.onChange(of: transaction.id) { _, _ in
 			loadFromTransaction()
+			scheduleCategoryAI()
+		}
+		.onChange(of: isExpense) { _, _ in
+			aiSuggestedCategory = nil
+			scheduleCategoryAI()
+		}
+		.onDisappear {
+			categoryDebounceTask?.cancel()
 		}
 	}
 
@@ -735,6 +839,30 @@ struct AccountingTransactionDetailView: View {
 		transaction.note = note
 		transaction.date = date
 		transaction.currencyCode = currencyCode
+	}
+
+	private func scheduleCategoryAI() {
+		guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+		categoryDebounceTask?.cancel()
+		categoryDebounceTask = Task {
+			try? await Task.sleep(nanoseconds: 700_000_000)
+			guard !Task.isCancelled else { return }
+			await runCategoryAI()
+		}
+	}
+
+	@MainActor
+	private func runCategoryAI() async {
+		let amount = Double(amountText) ?? 0
+		isAICategorizing = true
+		defer { isAICategorizing = false }
+		let suggestion = await aiService.suggestFinancialCategory(
+			title: title,
+			note: note,
+			amount: amount,
+			isExpense: isExpense
+		)
+		aiSuggestedCategory = suggestion
 	}
 }
 

@@ -26,8 +26,7 @@ struct AccountDetailView: View {
 	private let trailingEdgePadding: CGFloat = 12
 
 	private var avatarImage: NSImage? {
-		guard !appState.avatarImagePath.isEmpty else { return nil }
-		return NSImage(contentsOfFile: appState.avatarImagePath)
+		AvatarImageLoader.load(from: appState.avatarImagePath)
 	}
 
 	private var emailAccountStatus: EmailAccountStatus? {
@@ -270,6 +269,10 @@ private struct AvatarCropperSheet: View {
 	private let outputSide: CGFloat = 512
 
 	private var sourceSize: CGSize {
+		let intrinsicSize = sourceImage.size
+		if intrinsicSize.width > 0, intrinsicSize.height > 0 {
+			return intrinsicSize
+		}
 		guard let cg = sourceImage.cgImageFromImage else { return .zero }
 		return CGSize(width: cg.width, height: cg.height)
 	}
@@ -281,6 +284,24 @@ private struct AvatarCropperSheet: View {
 
 	private var renderedWidth: CGFloat { sourceSize.width * baseScale * zoom }
 	private var renderedHeight: CGFloat { sourceSize.height * baseScale * zoom }
+
+	private var imageFrameInPreview: CGRect {
+		CGRect(
+			x: (previewSide - renderedWidth) / 2 + offset.width,
+			y: (previewSide - renderedHeight) / 2 + offset.height,
+			width: renderedWidth,
+			height: renderedHeight
+		)
+	}
+
+	private var cropFrameInPreview: CGRect {
+		CGRect(
+			x: (previewSide - cropDiameter) / 2,
+			y: (previewSide - cropDiameter) / 2,
+			width: cropDiameter,
+			height: cropDiameter
+		)
+	}
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 14) {
@@ -380,35 +401,37 @@ private struct AvatarCropperSheet: View {
 	}
 
 	private func renderCroppedAvatar() -> NSImage? {
-		guard let cg = sourceImage.cgImageFromImage else { return nil }
-
-		let mappedScale = baseScale * zoom
-		guard mappedScale > 0 else { return nil }
-
-		let side = max(1, cropDiameter / mappedScale)
-		let centerX = CGFloat(cg.width) / 2 - offset.width / mappedScale
-		let centerYTopDown = CGFloat(cg.height) / 2 - offset.height / mappedScale
-
-		var topDownX = centerX - side / 2
-		var topDownY = centerYTopDown - side / 2
-		topDownX = min(max(0, topDownX), CGFloat(cg.width) - side)
-		topDownY = min(max(0, topDownY), CGFloat(cg.height) - side)
-
-		let yFromBottom = CGFloat(cg.height) - topDownY - side
-		let primaryRect = CGRect(x: topDownX, y: yFromBottom, width: side, height: side).integral
-		let fallbackRect = CGRect(x: topDownX, y: topDownY, width: side, height: side).integral
-		let square = cg.cropping(to: primaryRect) ?? cg.cropping(to: fallbackRect)
-		guard let square else { return nil }
+		guard sourceSize.width > 0, sourceSize.height > 0 else { return nil }
 
 		let outputSize = NSSize(width: outputSide, height: outputSide)
-		let output = NSImage(size: outputSize)
-		output.lockFocus()
-		let path = NSBezierPath(ovalIn: NSRect(origin: .zero, size: outputSize))
-		path.addClip()
-		NSGraphicsContext.current?.imageInterpolation = .high
-		NSImage(cgImage: square, size: outputSize).draw(in: NSRect(origin: .zero, size: outputSize))
-		output.unlockFocus()
-		return output
+		let scaleFactor = outputSide / cropDiameter
+		let imageFrame = imageFrameInPreview
+		let cropFrame = cropFrameInPreview
+		let drawRect = CGRect(
+			x: (imageFrame.minX - cropFrame.minX) * scaleFactor,
+			y: (imageFrame.minY - cropFrame.minY) * scaleFactor,
+			width: imageFrame.width * scaleFactor,
+			height: imageFrame.height * scaleFactor
+		)
+
+		return NSImage(size: outputSize, flipped: true) { rect in
+			NSGraphicsContext.current?.imageInterpolation = .high
+			NSColor.clear.setFill()
+			rect.fill()
+
+			let clipPath = NSBezierPath(ovalIn: rect)
+			clipPath.addClip()
+
+			sourceImage.draw(
+				in: drawRect,
+				from: CGRect(origin: .zero, size: sourceSize),
+				operation: .sourceOver,
+				fraction: 1,
+				respectFlipped: true,
+				hints: [.interpolation: NSImageInterpolation.high]
+			)
+			return true
+		}
 	}
 }
 

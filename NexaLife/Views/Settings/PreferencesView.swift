@@ -5,12 +5,14 @@
 //  Created by Lihong Gao on 2026-02-26.
 //
 
-import SwiftUI
 import AppKit
+import SwiftData
+import SwiftUI
 import UniformTypeIdentifiers
 
 struct PreferencesView: View {
 	@EnvironmentObject private var appState: AppState
+	@EnvironmentObject private var oauthService: OAuthService
 	@Environment(\.modelContext) private var modelContext
 	@Environment(\.locale) private var locale
 
@@ -34,6 +36,8 @@ struct PreferencesView: View {
 	@State private var privacyStatusSuccess = true
 	@State private var syncStatusMessage: String = ""
 	@State private var syncStatusSuccess = true
+	@State private var showRestartPrompt = false
+	@State private var showModelPicker = false
 
 	private let deepSeekModels = ["deepseek-chat", "deepseek-reasoner"]
 	private let qwenModels = ["qwen-turbo", "qwen-plus", "qwen-max"]
@@ -71,6 +75,39 @@ struct PreferencesView: View {
 			savedApiKey = key
 			apiKeyInput = key
 			draftProfileName = appState.userName
+		}
+		.sheet(isPresented: $showModelPicker) {
+			AIModelPickerSheet(
+				isPresented: $showModelPicker,
+				initialSelection: .builtIn(appState.selectedAIProvider, model: aiModelBinding.wrappedValue)
+			) { selection in
+				if let option = selection.builtInOption {
+					appState.selectedAIProvider = option
+					if option == .qwen {
+						appState.aiModelQwen = selection.model
+					} else {
+						appState.aiModelDeepSeek = selection.model
+					}
+				}
+				// Custom providers persist on the picker side; selection stored in
+				// future work when AIService learns to dispatch arbitrary endpoints.
+			}
+			.environment(\.locale, locale)
+		}
+		.alert(
+			AppBrand.localized("AI Key 已保存", "AI key saved", locale: locale),
+			isPresented: $showRestartPrompt
+		) {
+			Button(AppBrand.localized("退出并重启", "Quit & Reopen", locale: locale), role: .destructive) {
+				Self.relaunchApp()
+			}
+			Button(AppBrand.localized("稍后再说", "Later", locale: locale), role: .cancel) {}
+		} message: {
+			Text(AppBrand.localized(
+				"建议立即退出并重启 NexaLife，让 AI Mentor 立刻使用新的 API Key。",
+				"It is recommended to quit and reopen NexaLife so the AI Mentor picks up the new API key right away.",
+				locale: locale
+			))
 		}
 		.onChange(of: appState.userName) { _, newValue in
 			draftProfileName = newValue
@@ -203,24 +240,28 @@ struct PreferencesView: View {
 	private var aiTab: some View {
 		preferencePane {
 			PreferenceSectionCard(title: Text("preferences.ai.section.provider")) {
-				PreferenceRow(title: Text("preferences.ai.provider")) {
-					Picker("", selection: $appState.aiProvider) {
-						ForEach(AIProviderOption.allCases) { option in
-							Text(option.preferenceLabel(for: locale)).tag(option.rawValue)
-						}
-					}
-					.labelsHidden()
-					.frame(width: 280)
-				}
-
 				PreferenceRow(title: Text("preferences.ai.model")) {
-					Picker("", selection: aiModelBinding) {
-						ForEach(activeModelOptions, id: \.self) { model in
-							Text(model).tag(model)
+					HStack(spacing: 10) {
+						VStack(alignment: .trailing, spacing: 2) {
+							Text(appState.selectedAIProvider.preferenceLabel(for: locale))
+								.font(.subheadline.weight(.semibold))
+								.foregroundStyle(WorkspaceTheme.strongText)
+							Text(aiModelBinding.wrappedValue)
+								.font(.caption)
+								.foregroundStyle(WorkspaceTheme.mutedText)
+								.monospaced()
 						}
+						Button {
+							showModelPicker = true
+						} label: {
+							Label(
+								AppBrand.localized("更换", "Change", locale: locale),
+								systemImage: "arrow.triangle.2.circlepath"
+							)
+						}
+						.buttonStyle(.bordered)
+						.controlSize(.small)
 					}
-					.labelsHidden()
-					.frame(width: 280)
 				}
 
 				PreferenceRow(title: Text("preferences.ai.timeout")) {
@@ -258,39 +299,6 @@ struct PreferencesView: View {
 			}
 
 			PreferenceSectionCard(title: Text("preferences.token.section")) {
-					PreferenceRow(title: Text("preferences.token.storage_mode")) {
-						Picker("", selection: $appState.apiTokenStorageMode) {
-							ForEach(APITokenStorageMode.allCases) { mode in
-								Text(mode.preferenceLabel(for: locale)).tag(mode.rawValue)
-							}
-						}
-						.labelsHidden()
-						.frame(width: 280)
-						.onChange(of: appState.apiTokenStorageMode) { _, newValue in
-							let newMode = APITokenStorageMode(rawValue: newValue) ?? .keychain
-							AICredentialStore.updateStorageMode(newMode)
-							let key = AICredentialStore.readAPIKey()
-							savedApiKey = key
-							apiKeyInput = key
-						}
-					}
-
-				if appState.selectedAPITokenStorageMode == .localFile {
-					PreferenceRow(title: Text("preferences.token.local_file")) {
-						HStack(spacing: 8) {
-							Text(AICredentialStore.localFileURL().path)
-								.foregroundStyle(.secondary)
-								.truncationMode(.middle)
-								.frame(width: 260, alignment: .trailing)
-							Button("preferences.token.pick_file") {
-								selectTokenFile()
-							}
-							.buttonStyle(.bordered)
-							.controlSize(.small)
-						}
-					}
-				}
-
 				PreferenceRow(title: Text("preferences.token.saved")) {
 					HStack(spacing: 8) {
 						if showTokenValue && !savedApiKey.isEmpty {
@@ -645,16 +653,7 @@ struct PreferencesView: View {
 	}
 
 	private var tokenStorageLocationDescription: String {
-		switch appState.selectedAPITokenStorageMode {
-		case .keychain:
-			return AppBrand.localized(
-				"系统钥匙串 (Service: \(AppBrand.keychainService), Account: aiApiKey)",
-				"Keychain (Service: \(AppBrand.keychainService), Account: aiApiKey)",
-				locale: locale
-			)
-		case .localFile:
-			return AICredentialStore.localFileURL().path
-		}
+		AICredentialStore.localFileURL().path
 	}
 
 	private var profileTabTitle: String {
@@ -883,12 +882,29 @@ struct PreferencesView: View {
 	private func saveAPIKey() {
 		let trimmed = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !trimmed.isEmpty else { return }
+		let previousKey = savedApiKey
 		AICredentialStore.saveAPIKey(trimmed)
 		savedApiKey = AICredentialStore.readAPIKey()
 		withAnimation { savedToken = true }
 		DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
 			withAnimation { savedToken = false }
 		}
+		if savedApiKey != previousKey {
+			showRestartPrompt = true
+		}
+	}
+
+	private static func relaunchApp() {
+		let bundleURL = Bundle.main.bundleURL
+		let task = Process()
+		task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+		task.arguments = ["-n", bundleURL.path]
+		do {
+			try task.run()
+		} catch {
+			AppLogger.warning("Relaunch failed: \(error.localizedDescription)", category: "app")
+		}
+		NSApp.terminate(nil)
 	}
 
 	@MainActor
@@ -896,30 +912,36 @@ struct PreferencesView: View {
 		aiTestInProgress = true
 		aiTestMessage = ""
 		let service = AIService()
-		let response = await service.callAPI(
-			prompt: "请回复：连接成功",
-			maxTokens: 20
+		// Reasoning models (e.g. deepseek-v4-pro in thinking mode) burn tokens
+		// on internal reasoning before emitting any visible content. Give the
+		// test plenty of headroom so a thinking model can still produce output.
+		let result = await service.callAPIDetailed(
+			prompt: "请用一句话回复：连接成功",
+			maxTokens: 512
 		)
 		aiTestInProgress = false
-		if let response, !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-			aiTestMessage = String(localized: "preferences.ai.test.success")
+		switch result {
+		case .success(let text):
+			let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+			if trimmed.isEmpty {
+				// HTTP 200 with empty content still means the network/key/model
+				// path is healthy — flag success but warn the user.
+				aiTestMessage = AppBrand.localized(
+					"连接成功，但模型返回空内容（可能正在思考耗光 max_tokens）。",
+					"Connected, but the model returned empty content (likely a thinking model exhausting max_tokens).",
+					locale: locale
+				)
+			} else {
+				aiTestMessage = AppBrand.localized(
+					"连接成功：\(String(trimmed.prefix(40)))",
+					"Connected: \(String(trimmed.prefix(40)))",
+					locale: locale
+				)
+			}
 			aiTestSucceeded = true
-		} else {
-			aiTestMessage = String(localized: "preferences.ai.test.failure")
+		case .failure(let error):
+			aiTestMessage = error.errorDescription ?? String(localized: "preferences.ai.test.failure")
 			aiTestSucceeded = false
-		}
-	}
-
-	private func selectTokenFile() {
-		let panel = NSSavePanel()
-		panel.nameFieldStringValue = "ai_api_token.txt"
-		panel.allowedContentTypes = [.plainText]
-		panel.canCreateDirectories = true
-		guard panel.runModal() == .OK, let url = panel.url else { return }
-		AICredentialStore.setLocalFileURL(url)
-		if !apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-			AICredentialStore.saveAPIKey(apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines))
-			savedApiKey = AICredentialStore.readAPIKey()
 		}
 	}
 
@@ -1189,12 +1211,13 @@ struct PreferencesView: View {
 	private func deleteAccountForFreshStart() {
 		rebirthStatusMessage = ""
 		do {
+			NotificationCenter.default.post(name: .nexaLifeResetSelections, object: nil)
 			try AppDataArchiveService.clearAllModelData(modelContext: modelContext)
 			if !appState.avatarImagePath.isEmpty {
 				try? FileManager.default.removeItem(at: URL(fileURLWithPath: appState.avatarImagePath))
 			}
 			AICredentialStore.clearAPIKey()
-			appState.resetAccountForFreshStart()
+			oauthService.resetSession()
 			savedApiKey = ""
 			apiKeyInput = ""
 			showTokenValue = false
@@ -1212,6 +1235,9 @@ struct PreferencesView: View {
 					locale: locale
 				)
 			rebirthStatusSuccess = true
+			DispatchQueue.main.async {
+				appState.resetAccountForFreshStart()
+			}
 		} catch {
 			rebirthStatusMessage = String(localized: "preferences.data.fresh_start.partial_failure")
 				+ error.localizedDescription

@@ -8,21 +8,51 @@
 import SwiftUI
 import SwiftData
 
+enum ConnectionFilter: String, CaseIterable {
+	case all = "全部"
+	case highPriority = "高优先"
+	case needFollowUp = "待跟进"
+	case thisWeek = "本周联系"
+}
+
 struct ConnectionView: View {
+	@Environment(\.modelContext) private var modelContext
 	@Query(sort: \Connection.name) private var connections: [Connection]
 
 	@Binding var selectedConnection: Connection?
 	@State private var searchText = ""
+	@State private var selectedFilter: ConnectionFilter = .all
 
 	private let calendar = Calendar.current
 
-	private var filteredConnections: [Connection] {
+	private var keywordFiltered: [Connection] {
 		let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !keyword.isEmpty else { return connections }
 		return connections.filter {
 			$0.name.localizedCaseInsensitiveContains(keyword) ||
 			$0.relationship.localizedCaseInsensitiveContains(keyword) ||
 			$0.notes.localizedCaseInsensitiveContains(keyword)
+		}
+	}
+
+	private var filteredConnections: [Connection] {
+		switch selectedFilter {
+		case .all:
+			return keywordFiltered
+		case .highPriority:
+			return keywordFiltered.filter { $0.importanceLevel >= 4 }
+		case .needFollowUp:
+			let threshold = calendar.date(byAdding: .day, value: -30, to: Date()) ?? Date()
+			return keywordFiltered.filter {
+				guard let date = $0.lastContactDate else { return true }
+				return date < threshold
+			}
+		case .thisWeek:
+			guard let startOfWeek = calendar.dateInterval(of: .weekOfYear, for: Date())?.start else { return [] }
+			return keywordFiltered.filter {
+				guard let date = $0.lastContactDate else { return false }
+				return date >= startOfWeek
+			}
 		}
 	}
 
@@ -46,112 +76,161 @@ struct ConnectionView: View {
 		}.count
 	}
 
+	private var activeRelationshipCount: Int {
+		connections.filter { !$0.relationship.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+	}
+
 	var body: some View {
 		VStack(spacing: 0) {
-			header
+			searchBar
 
-			Divider()
+			filterBar
 
-			HStack {
-				Image(systemName: "magnifyingglass")
-					.foregroundStyle(.secondary)
-				TextField("搜索联系人、关系、备注…", text: $searchText)
-					.textFieldStyle(.plain)
-				if !searchText.isEmpty {
-					Button {
-						searchText = ""
-					} label: {
-						Image(systemName: "xmark.circle.fill")
-							.foregroundStyle(.secondary)
+			ScrollView {
+				VStack(alignment: .leading, spacing: 18) {
+					LazyVGrid(
+						columns: [GridItem(.adaptive(minimum: 210, maximum: 280), spacing: 14)],
+						alignment: .leading,
+						spacing: 14
+					) {
+						WorkspaceMetricTile(
+							title: "活跃关系",
+							value: "\(activeRelationshipCount)",
+							subtitle: "已经明确关系标签的联系人",
+							icon: "person.crop.circle.badge.checkmark",
+							accent: .teal
+						)
+						WorkspaceMetricTile(
+							title: "待跟进",
+							value: "\(needFollowUpCount)",
+							subtitle: "超过 30 天未联系的人脉",
+							icon: "bell.badge",
+							accent: .orange
+						)
+						WorkspaceMetricTile(
+							title: "本周联系",
+							value: "\(contactedThisWeekCount)",
+							subtitle: "本周已发生互动的联系人",
+							icon: "bubble.left.and.text.bubble.right",
+							accent: .blue
+						)
 					}
-					.buttonStyle(.plain)
+
+					connectionWorkspacePanel
+				}
+				.padding(.horizontal, 16)
+				.padding(.vertical, 18)
+				.frame(maxWidth: .infinity, alignment: .leading)
+			}
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .nexaLifeLifestyleCreateConnection)) { _ in
+			createConnection()
+		}
+	}
+
+	private var filterBar: some View {
+		ScrollView(.horizontal, showsIndicators: false) {
+			HStack(spacing: 8) {
+				ForEach(ConnectionFilter.allCases, id: \.self) { filter in
+					connectionFilterChip(filter)
 				}
 			}
-			.padding(8)
-			.background(Color(nsColor: .controlBackgroundColor))
-			.clipShape(RoundedRectangle(cornerRadius: 8))
-			.padding(.horizontal, 12)
-			.padding(.vertical, 8)
+			.padding(.horizontal, 16)
+			.padding(.bottom, 14)
+			.padding(.top, 4)
+		}
+	}
 
-			Divider()
+	private func connectionFilterChip(_ filter: ConnectionFilter) -> some View {
+		let isActive = selectedFilter == filter
+		return Text(filter.rawValue)
+			.font(.subheadline.weight(isActive ? .semibold : .medium))
+			.foregroundStyle(isActive ? Color.white : WorkspaceTheme.strongText)
+			.padding(.horizontal, 14)
+			.padding(.vertical, 7)
+			.background(isActive ? Color.teal : WorkspaceTheme.elevatedSurface)
+			.clipShape(Capsule())
+			.contentShape(Capsule())
+			.onTapGesture {
+				selectedFilter = filter
+			}
+	}
 
-			List(selection: $selectedConnection) {
+	private func createConnection() {
+		let connection = Connection(name: "新联系人")
+		modelContext.insert(connection)
+		selectedConnection = connection
+	}
+
+	private var searchBar: some View {
+		HStack {
+			Image(systemName: "magnifyingglass")
+				.foregroundStyle(WorkspaceTheme.mutedText)
+			TextField("搜索联系人、关系、备注…", text: $searchText)
+				.textFieldStyle(.plain)
+			if !searchText.isEmpty {
+				Image(systemName: "xmark.circle.fill")
+					.foregroundStyle(WorkspaceTheme.mutedText)
+					.contentShape(Rectangle())
+					.onTapGesture {
+						searchText = ""
+					}
+			}
+		}
+		.padding(.horizontal, 14)
+		.padding(.vertical, 12)
+		.background(WorkspaceTheme.elevatedSurface)
+		.clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+		.overlay(
+			RoundedRectangle(cornerRadius: 16, style: .continuous)
+				.stroke(WorkspaceTheme.border, lineWidth: 1)
+		)
+		.padding(.horizontal, 12)
+		.padding(.vertical, 8)
+	}
+
+	private func isSelected(_ connection: Connection) -> Bool {
+		selectedConnection?.id == connection.id
+	}
+
+	private var connectionWorkspacePanel: some View {
+		WorkspaceCard(accent: .teal, padding: 20, cornerRadius: 24, shadowY: 8) {
+			VStack(alignment: .leading, spacing: 14) {
+				WorkspacePanelHeader(
+					title: "Relationship Desk",
+					subtitle: "把重要的人脉放在同一张工作台里维护",
+					accent: .teal,
+					icon: "person.2",
+					value: "\(filteredConnections.count)"
+				)
+
 				if filteredConnections.isEmpty {
 					ContentUnavailableView(
 						searchText.isEmpty ? "还没有联系人" : "没有匹配结果",
 						systemImage: "person.2",
-						description: Text(searchText.isEmpty ? "点击右上角添加后，在右侧详情编辑" : "换个关键词")
+						description: Text(searchText.isEmpty ? "点击右上角添加后继续编辑" : "换个关键词")
 					)
+					.frame(maxWidth: .infinity)
+					.padding(.vertical, 40)
 				} else {
-					ForEach(filteredConnections) { connection in
-						ConnectionRowView(connection: connection)
-							.tag(connection)
-							.listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+					LazyVGrid(
+						columns: [GridItem(.adaptive(minimum: 280, maximum: 360), spacing: 12)],
+						alignment: .leading,
+						spacing: 12
+					) {
+						ForEach(filteredConnections) { connection in
+							WorkspaceSelectableCard(accent: .teal, isSelected: isSelected(connection), cornerRadius: 18, padding: 14) {
+								ConnectionRowView(connection: connection)
+							}
+							.contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+							.onTapGesture {
+								selectedConnection = connection
+							}
+						}
 					}
 				}
 			}
 		}
-	}
-
-	private var header: some View {
-		LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-			ConnectionMetricCard(
-				title: "联系人总数",
-				value: "\(connections.count)",
-				subtitle: "已建立档案",
-				color: .teal
-			)
-			ConnectionMetricCard(
-				title: "高优先级",
-				value: "\(highPriorityCount)",
-				subtitle: "重要性 4-5 分",
-				color: .orange
-			)
-			ConnectionMetricCard(
-				title: "待跟进",
-				value: "\(needFollowUpCount)",
-				subtitle: "30 天未联系或未记录",
-				color: .red
-			)
-			ConnectionMetricCard(
-				title: "本周已联系",
-				value: "\(contactedThisWeekCount)",
-				subtitle: "关系维护节奏",
-				color: .blue
-			)
-		}
-		.padding(.horizontal, 12)
-		.padding(.vertical, 10)
-		.background(Color(nsColor: .windowBackgroundColor))
-	}
-}
-
-private struct ConnectionMetricCard: View {
-	var title: String
-	var value: String
-	var subtitle: String
-	var color: Color
-
-	var body: some View {
-		VStack(alignment: .leading, spacing: 4) {
-			Text(title)
-				.font(.caption)
-				.foregroundStyle(.secondary)
-			Text(value)
-				.font(.system(size: 20, weight: .bold))
-				.foregroundStyle(color)
-				.lineLimit(1)
-				.minimumScaleFactor(0.7)
-			Text(subtitle)
-				.font(.caption2)
-				.foregroundStyle(.secondary)
-				.lineLimit(1)
-		}
-		.frame(maxWidth: .infinity, alignment: .leading)
-		.padding(.horizontal, 10)
-		.padding(.vertical, 8)
-		.background(color.opacity(0.1))
-		.clipShape(RoundedRectangle(cornerRadius: 10))
 	}
 }
 
@@ -172,38 +251,51 @@ struct ConnectionRowView: View {
 	}
 
 	var body: some View {
-		HStack(spacing: 12) {
-			ZStack {
-				Circle()
-					.fill(Color.teal.opacity(0.15))
-					.frame(width: 40, height: 40)
-				Text(String(connection.name.prefix(1)))
-					.font(.headline)
-					.foregroundStyle(.teal)
-			}
+		VStack(alignment: .leading, spacing: 10) {
+			HStack(alignment: .top, spacing: 12) {
+				ZStack {
+					Circle()
+						.fill(Color.teal.opacity(0.15))
+						.frame(width: 40, height: 40)
+					Text(String(connection.name.prefix(1)))
+						.font(.headline)
+						.foregroundStyle(.teal)
+				}
 
-			VStack(alignment: .leading, spacing: 4) {
-				HStack(spacing: 6) {
+				VStack(alignment: .leading, spacing: 4) {
 					Text(connection.name)
 						.font(.headline)
-					Text("重要性 \(normalizedImportance)/5")
-						.font(.caption2)
-						.padding(.horizontal, 6)
-						.padding(.vertical, 2)
-						.background(Color.orange.opacity(0.15))
-						.clipShape(Capsule())
+						.foregroundStyle(WorkspaceTheme.strongText)
+					Text(connection.relationship.isEmpty ? "关系未填写" : connection.relationship)
+						.font(.caption)
+						.foregroundStyle(WorkspaceTheme.mutedText)
 				}
-				Text(connection.relationship.isEmpty ? "关系未填写" : connection.relationship)
-					.font(.caption)
-					.foregroundStyle(.secondary)
+
+				Spacer()
+			}
+
+			HStack(spacing: 8) {
+				Text("重要性 \(normalizedImportance)/5")
+					.font(.caption2.weight(.semibold))
+					.padding(.horizontal, 7)
+					.padding(.vertical, 3)
+					.background(Color.orange.opacity(0.15))
+					.foregroundStyle(.orange)
+					.clipShape(Capsule())
+
 				Text(followUpText)
 					.font(.caption2)
-					.foregroundStyle(.tertiary)
+					.foregroundStyle(.secondary)
 			}
-			Spacer()
+
+			if !connection.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+				Text(connection.notes)
+					.font(.caption)
+					.foregroundStyle(WorkspaceTheme.mutedText)
+					.lineLimit(2)
+			}
 		}
 		.frame(maxWidth: .infinity, alignment: .leading)
-		.padding(.vertical, 4)
 	}
 }
 
@@ -253,7 +345,6 @@ struct ConnectionDetailView: View {
 			}
 			.padding(28)
 		}
-		.navigationTitle(connection.name.isEmpty ? "联系人详情" : connection.name)
 	}
 
 	private var identitySection: some View {

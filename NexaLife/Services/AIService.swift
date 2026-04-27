@@ -49,6 +49,39 @@ private struct InboxHandlingAIResponse: Decodable {
 	var reason: String?
 }
 
+private struct ProfileGuidanceAIResponse: Decodable {
+	var headline: String?
+	var strengths: [String]?
+	var patterns: [String]?
+	var nextSteps: [String]?
+	var caution: String?
+}
+
+private struct DailyReviewAIResponse: Decodable {
+	var summary: String?
+	var guidance: String?
+}
+
+private struct AIChatResponse: Decodable {
+	struct Choice: Decodable {
+		struct Message: Decodable {
+			var content: String?
+		}
+
+		var message: Message
+	}
+
+	var choices: [Choice]
+}
+
+private struct AIRequestConfiguration {
+	var rawProvider: String
+	var url: URL
+	var modelName: String
+	var apiKey: String
+	var timeout: Double
+}
+
 private enum TaskSuggestionEngine {
 	private struct Rule {
 		let category: String
@@ -92,7 +125,13 @@ private enum TaskSuggestionEngine {
 	private static let moduleRules: [(AppModule, [String])] = [
 		(.execution, ["待办", "任务", "项目", "截止", "计划", "执行", "安排", "todo", "deadline", "deliver"]),
 		(.knowledge, ["学习", "笔记", "复盘", "总结", "读书", "知识", "note", "learn", "study"]),
-		(.lifestyle, ["消费", "支出", "预算", "收入", "工资", "报销", "转账", "付款", "收款", "账单", "记账", "花了", "买了", "餐饮", "交通", "房租", "旅行", "社交", "理财", "money", "budget", "expense", "income", "finance", "payment"]),
+		(.lifestyle, [
+			"消费", "支出", "预算", "收入", "工资", "报销", "转账", "付款", "收款", "账单", "记账",
+			"花了", "买了", "餐饮", "交通", "房租", "旅行", "社交", "理财", "扣费", "充值", "订阅",
+			"会员", "开通", "续费", "购买", "付费", "费用", "花费", "消耗", "付了", "转了",
+			"money", "budget", "expense", "income", "finance", "payment", "fee", "subscription",
+			"membership", "purchase", "bought", "paid", "charged", "billing"
+		]),
 		(.vitals, ["情绪", "反思", "焦虑", "动力", "灵感", "价值观", "心理", "mood", "reflect"])
 	]
 
@@ -110,6 +149,43 @@ private enum TaskSuggestionEngine {
 			}
 		}
 		return bestScore == 0 ? .inbox : bestModule
+	}
+
+	/// Suggest a financial category for an expense or income entry.
+	static func financialCategoryFallback(title: String, note: String, isExpense: Bool) -> String {
+		let text = "\(title) \(note)".lowercased()
+		if isExpense {
+			let rules: [(String, [String])] = [
+				("餐饮", ["餐", "饭", "吃", "外卖", "咖啡", "奶茶", "饮品", "food", "restaurant", "coffee", "lunch", "dinner", "breakfast"]),
+				("交通", ["打车", "地铁", "公交", "滴滴", "taxi", "uber", "bus", "metro", "train", "高铁", "机票", "flight"]),
+				("购物", ["买了", "购买", "淘宝", "京东", "亚马逊", "shopping", "amazon", "buy", "order"]),
+				("数码", ["手机", "电脑", "耳机", "iphone", "ipad", "macbook", "apple", "数码", "设备"]),
+				("娱乐", ["电影", "游戏", "ktv", "演唱会", "concert", "movie", "game", "netflix", "spotify"]),
+				("学习", ["课程", "书", "培训", "课", "study", "course", "book", "learning"]),
+				("通讯", ["话费", "流量", "宽带", "phone bill", "internet", "通讯", "网费"]),
+				("住房", ["房租", "租金", "物业", "水电", "rent", "utility", "电费", "水费"]),
+				("医疗", ["医院", "药", "体检", "hospital", "medicine", "doctor", "clinic"]),
+				("旅行", ["旅行", "旅游", "酒店", "hotel", "travel", "trip", "vacation"]),
+				("社交", ["请客", "AA", "聚餐", "礼金", "红包", "gift", "social"]),
+				("订阅", ["会员", "订阅", "membership", "subscription", "premium", "vip", "续费", "扣费", "自动扣"]),
+				("投资", ["基金", "股票", "理财", "fund", "stock", "invest"]),
+			]
+			for (category, keywords) in rules {
+				if keywords.contains(where: { text.contains($0) }) { return category }
+			}
+			return "其他"
+		} else {
+			let rules: [(String, [String])] = [
+				("工资", ["工资", "薪资", "salary", "payroll", "月薪"]),
+				("理财", ["基金", "股票", "分红", "利息", "fund", "dividend", "interest"]),
+				("租金", ["租金", "rent"]),
+				("年终奖", ["年终", "奖金", "bonus"]),
+			]
+			for (category, keywords) in rules {
+				if keywords.contains(where: { text.contains($0) }) { return category }
+			}
+			return "收款"
+		}
 	}
 
 	static func suggestTaskMetadata(
@@ -374,7 +450,7 @@ private enum InboxSuggestionEngine {
 				headline: AppBrand.localized("建议沉淀到 Vitals", "Capture this in Vitals", locale: locale),
 				reason: AppBrand.localized("文本更像情绪、反思或核心守则记录，留在 Vitals 更自然。", "This reads more like emotion, reflection, or a principle, so Vitals is the most natural place.", locale: locale)
 			)
-		case .dashboard, .inbox:
+		case .dashboard, .inbox, .trash:
 			return InboxHandlingSuggestion(
 				module: .inbox,
 				headline: AppBrand.localized("先留在收件箱", "Keep it in the inbox for now", locale: locale),
@@ -390,11 +466,6 @@ class AIService: ObservableObject {
 	enum AIProvider: String {
 		case deepseek = "https://api.deepseek.com/v1/chat/completions"
 		case qwen     = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-	}
-
-	var provider: AIProvider {
-		let raw = UserDefaults.standard.string(forKey: "aiProvider") ?? "deepseek"
-		return raw == "qwen" ? .qwen : .deepseek
 	}
 
 	var apiKey: String {
@@ -413,6 +484,54 @@ class AIService: ObservableObject {
 		default:
 			return .autoupdatingCurrent
 		}
+	}
+
+	private var requestConfiguration: AIRequestConfiguration? {
+		let rawProvider = UserDefaults.standard.string(forKey: "aiProvider") ?? AIProviderOption.deepseek.rawValue
+		let providerURL = rawProvider == AIProviderOption.qwen.rawValue
+			? AIProvider.qwen.rawValue
+			: AIProvider.deepseek.rawValue
+		let modelName: String = {
+			if rawProvider == AIProviderOption.qwen.rawValue {
+				return UserDefaults.standard.string(forKey: "aiModelQwen") ?? "qwen-turbo"
+			}
+			return UserDefaults.standard.string(forKey: "aiModelDeepSeek") ?? "deepseek-chat"
+		}()
+		let configuredTimeout = UserDefaults.standard.double(forKey: "aiTimeoutSeconds")
+		let timeout = configuredTimeout > 0 ? configuredTimeout : 30
+		let key = AICredentialStore.readAPIKey()
+
+		guard !key.isEmpty, let url = URL(string: providerURL) else { return nil }
+		return AIRequestConfiguration(
+			rawProvider: rawProvider,
+			url: url,
+			modelName: modelName,
+			apiKey: key,
+			timeout: timeout
+		)
+	}
+
+	private func requestJSON<T: Decodable>(_ type: T.Type, prompt: String, maxTokens: Int) async -> T? {
+		guard
+			let response = await callAPI(prompt: prompt, maxTokens: maxTokens),
+			let jsonString = extractJSONObject(from: response),
+			let data = jsonString.data(using: .utf8)
+		else {
+			return nil
+		}
+
+		return try? JSONDecoder().decode(type, from: data)
+	}
+
+	private func trimmedOrFallback(_ value: String?, fallback: String) -> String {
+		value?
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+			.nonEmpty ?? fallback
+	}
+
+	private func normalizedOrFallback(_ values: [String]?, fallback: [String]) -> [String] {
+		let normalized = TaskSuggestionEngine.normalizeTags(values ?? [])
+		return normalized.isEmpty ? fallback : normalized
 	}
 
 	// MARK: - 自动归类
@@ -445,8 +564,56 @@ class AIService: ObservableObject {
 			Text: "\(text)"
 			Reply with one word only: Execution / Knowledge / Lifestyle / Vitals / Inbox
 			"""
-		guard let response = await callAPI(prompt: prompt, maxTokens: 20) else { return fallback }
-		return AppModule(rawValue: response.trimmingCharacters(in: .whitespacesAndNewlines)) ?? fallback
+		guard let response = await callAPI(prompt: prompt, maxTokens: 60) else { return fallback }
+		// Scan response for the first matching module name (case-insensitive).
+		let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+		let candidates: [AppModule] = [.execution, .knowledge, .lifestyle, .vitals, .inbox]
+		if let match = candidates.first(where: { trimmed.localizedCaseInsensitiveContains($0.rawValue) }) {
+			return match
+		}
+		return AppModule(rawValue: trimmed) ?? fallback
+	}
+
+	// MARK: - 财务分类建议
+	func suggestFinancialCategory(title: String, note: String, amount: Double, isExpense: Bool) async -> String {
+		let locale = interfaceLocale
+		let fallback = TaskSuggestionEngine.financialCategoryFallback(title: title, note: note, isExpense: isExpense)
+		guard isConfigured else { return fallback }
+
+		let expenseList = "餐饮/购物/日用/交通/水果/零食/运动/娱乐/通讯/服饰/美容/住房/家庭/社交/旅行/数码/汽车/医疗/书籍/学习/宠物/礼品/办公/维修/游戏/快递/捐赠/烟酒/蔬菜/投资/订阅/其他"
+		let incomeList = "工资/租金/分红/理财/年终奖/借入/收款"
+		let categoryList = isExpense ? expenseList : incomeList
+		let typeLabel = isExpense
+			? (locale.isChineseInterface ? "支出" : "expense")
+			: (locale.isChineseInterface ? "收入" : "income")
+
+		let prompt = locale.isChineseInterface
+			? """
+			你是财务助手，根据以下条目信息，从分类列表中选出最合适的分类，只输出分类名称，不要输出其他文字。
+			类型：\(typeLabel)
+			金额：\(String(format: "%.2f", abs(amount)))
+			标题：\(title)
+			备注：\(note)
+			可选分类：\(categoryList)
+			"""
+			: """
+			You are a finance assistant. Pick the best category for this \(typeLabel) entry from the list below. Output the category name only.
+			Amount: \(String(format: "%.2f", abs(amount)))
+			Title: \(title)
+			Note: \(note)
+			Categories: \(categoryList)
+			"""
+
+		guard let response = await callAPI(prompt: prompt, maxTokens: 30) else { return fallback }
+		let cleaned = response.trimmingCharacters(in: .whitespacesAndNewlines)
+		// Validate the returned value is actually in our catalog.
+		let allCategories = (expenseList + "/" + incomeList).components(separatedBy: "/")
+		if allCategories.contains(cleaned) { return cleaned }
+		// Try partial match (AI may return "订阅服务" when "订阅" is in catalog).
+		if let partial = allCategories.first(where: { cleaned.contains($0) || $0.contains(cleaned) }) {
+			return partial
+		}
+		return fallback
 	}
 
 	func suggestTaskMetadata(
@@ -500,30 +667,14 @@ class AIService: ObservableObject {
 			Notes: \(notes)
 			"""
 
-		guard
-			let response = await callAPI(prompt: prompt, maxTokens: 180),
-			let jsonString = extractJSONObject(from: response),
-			let data = jsonString.data(using: .utf8),
-			let parsed = try? JSONDecoder().decode(TaskMetadataAIResponse.self, from: data)
-		else {
+		guard let parsed = await requestJSON(TaskMetadataAIResponse.self, prompt: prompt, maxTokens: 180) else {
 			return fallback
 		}
 
-		let category = parsed.category?
-			.trimmingCharacters(in: .whitespacesAndNewlines)
-			.nonEmpty ?? fallback.category
-
-		let tags = TaskSuggestionEngine.normalizeTags(parsed.tags ?? [])
-		let finalTags = tags.isEmpty ? fallback.tags : tags
-
-		let project = parsed.projectName?
-			.trimmingCharacters(in: .whitespacesAndNewlines)
-			.nonEmpty ?? fallback.projectName
-
 		return TaskMetadataSuggestion(
-			category: category,
-			tags: finalTags,
-			projectName: project
+			category: trimmedOrFallback(parsed.category, fallback: fallback.category),
+			tags: normalizedOrFallback(parsed.tags, fallback: fallback.tags),
+			projectName: trimmedOrFallback(parsed.projectName, fallback: fallback.projectName)
 		)
 	}
 
@@ -584,33 +735,18 @@ class AIService: ObservableObject {
 			My Question: \(question)
 			"""
 
-		guard
-			let response = await callAPI(prompt: prompt, maxTokens: 260),
-			let jsonString = extractJSONObject(from: response),
-			let data = jsonString.data(using: .utf8),
-			let parsed = try? JSONDecoder().decode(ConnectionInsightAIResponse.self, from: data)
-		else {
+		guard let parsed = await requestJSON(ConnectionInsightAIResponse.self, prompt: prompt, maxTokens: 260) else {
 			return fallback
 		}
 
 		let importance = min(5, max(1, parsed.importance ?? fallback.importance))
-		let attitude = parsed.attitude?
-			.trimmingCharacters(in: .whitespacesAndNewlines)
-			.nonEmpty ?? fallback.attitude
-		let reason = parsed.reason?
-			.trimmingCharacters(in: .whitespacesAndNewlines)
-			.nonEmpty ?? fallback.reason
-		let nextAction = parsed.nextAction?
-			.trimmingCharacters(in: .whitespacesAndNewlines)
-			.nonEmpty ?? fallback.nextAction
-		let signals = TaskSuggestionEngine.normalizeTags(parsed.keySignals ?? fallback.keySignals)
 
 		return ConnectionInsight(
 			importance: importance,
-			attitude: attitude,
-			reason: reason,
-			nextAction: nextAction,
-			keySignals: signals.isEmpty ? fallback.keySignals : signals
+			attitude: trimmedOrFallback(parsed.attitude, fallback: fallback.attitude),
+			reason: trimmedOrFallback(parsed.reason, fallback: fallback.reason),
+			nextAction: trimmedOrFallback(parsed.nextAction, fallback: fallback.nextAction),
+			keySignals: normalizedOrFallback(parsed.keySignals, fallback: fallback.keySignals)
 		)
 	}
 
@@ -635,12 +771,7 @@ class AIService: ObservableObject {
 			Input: \(text)
 			"""
 
-		guard
-			let response = await callAPI(prompt: prompt, maxTokens: 180),
-			let jsonString = extractJSONObject(from: response),
-			let data = jsonString.data(using: .utf8),
-			let parsed = try? JSONDecoder().decode(InboxHandlingAIResponse.self, from: data)
-		else {
+		guard let parsed = await requestJSON(InboxHandlingAIResponse.self, prompt: prompt, maxTokens: 180) else {
 			return fallback
 		}
 
@@ -649,14 +780,12 @@ class AIService: ObservableObject {
 			.nonEmpty
 			.flatMap(AppModule.init(rawValue:))
 			?? fallback.module
-		let headline = parsed.headline?
-			.trimmingCharacters(in: .whitespacesAndNewlines)
-			.nonEmpty ?? fallback.headline
-		let reason = parsed.reason?
-			.trimmingCharacters(in: .whitespacesAndNewlines)
-			.nonEmpty ?? fallback.reason
 
-		return InboxHandlingSuggestion(module: module, headline: headline, reason: reason)
+		return InboxHandlingSuggestion(
+			module: module,
+			headline: trimmedOrFallback(parsed.headline, fallback: fallback.headline),
+			reason: trimmedOrFallback(parsed.reason, fallback: fallback.reason)
+		)
 	}
 
 	// MARK: - 生成报告
@@ -682,58 +811,251 @@ class AIService: ObservableObject {
 			?? AppBrand.localized("报告生成失败，请检查网络与 API Key。", "Report generation failed. Check the network connection and API key.", locale: locale)
 	}
 
+	func generateProfileGuidance(context: ProfileGuidanceContext) async -> ProfileGuidanceSummary {
+		let locale = interfaceLocale
+		let fallback = ProfileGuidanceEngine.fallbackSummary(context: context, locale: locale)
+		guard isConfigured else { return fallback }
+
+		let compactReviews = context.dailyReviews
+			.sorted { $0.day > $1.day }
+			.prefix(5)
+			.map { review in
+				"\(review.day.formatted(date: .abbreviated, time: .omitted)) | wins: \(review.wins) | challenges: \(review.challenges) | tomorrow: \(review.tomorrowPlan)"
+			}
+			.joined(separator: "\n")
+
+		let compactVitals = context.vitals
+			.sorted { $0.timestamp > $1.timestamp }
+			.prefix(8)
+			.map { "\($0.type.rawValue): \($0.content)" }
+			.joined(separator: "\n")
+
+		let compactTasks = context.tasks
+			.filter { $0.archivedMonthKey == nil }
+			.prefix(10)
+			.map { "\($0.status.rawValue) | \($0.title) | \($0.category) | \($0.tagsText)" }
+			.joined(separator: "\n")
+
+		let compactNotes = context.notes
+			.sorted { $0.updatedAt > $1.updatedAt }
+			.prefix(8)
+			.map { "\($0.title) | \($0.topic)" }
+			.joined(separator: "\n")
+
+		let compactGoals = context.goals
+			.prefix(8)
+			.map { "\($0.title) | \($0.template.rawValue) | \($0.trackingFrequency.rawValue) | progress=\(Int($0.progress * 100))%" }
+			.joined(separator: "\n")
+
+		let userModeDescription = context.guidanceMode == .exploratory
+			? AppBrand.localized("用户自述：目前仍在探索方向，需要更多模式识别与阶段性引导。", "User self-description: still exploring direction and needs more pattern recognition plus stage-based guidance.", locale: locale)
+			: AppBrand.localized("用户自述：已有相对清晰的方向，更需要执行推进、优先级和复盘支持。", "User self-description: already has a relatively clear direction and mainly needs execution, prioritization, and review support.", locale: locale)
+
+		let prompt = locale.isChineseInterface
+			? """
+			你是 NexaLife 的 AI 导师。请根据以下用户近期记录，输出一个温和、具体、非武断的引导结论。
+			只输出 JSON，不要输出其他文本：
+			{"headline":"一句话判断","strengths":["优点1","优点2"],"patterns":["模式1","模式2"],"nextSteps":["建议1","建议2","建议3"],"caution":"一句提醒"}
+
+			要求：
+			1) 语气像导师，不要像算命
+			2) 不要给身份标签，只能说“最近呈现出的模式”
+			3) nextSteps 必须是可执行的小动作
+			4) 每个数组 2-3 条
+
+			\(userModeDescription)
+
+			任务：
+			\(compactTasks)
+
+			笔记：
+			\(compactNotes)
+
+			目标：
+			\(compactGoals)
+
+			Vitals：
+			\(compactVitals)
+
+			Daily Reviews：
+			\(compactReviews)
+			"""
+			: """
+			You are the AI mentor inside NexaLife. Based on the recent records below, produce a gentle, concrete, non-dogmatic guidance summary.
+			Return JSON only:
+			{"headline":"one-line read","strengths":["strength 1","strength 2"],"patterns":["pattern 1","pattern 2"],"nextSteps":["step 1","step 2","step 3"],"caution":"one reminder"}
+
+			Rules:
+			1) sound like a mentor, not a fortune teller
+			2) do not assign identity labels; only describe recurring patterns
+			3) nextSteps must be small executable actions
+			4) each array should contain 2-3 items
+
+			\(userModeDescription)
+
+			Tasks:
+			\(compactTasks)
+
+			Notes:
+			\(compactNotes)
+
+			Goals:
+			\(compactGoals)
+
+			Vitals:
+			\(compactVitals)
+
+			Daily Reviews:
+			\(compactReviews)
+			"""
+
+		guard let parsed = await requestJSON(ProfileGuidanceAIResponse.self, prompt: prompt, maxTokens: 420) else {
+			return fallback
+		}
+
+		return ProfileGuidanceSummary(
+			headline: trimmedOrFallback(parsed.headline, fallback: fallback.headline),
+			strengths: normalizedOrFallback(parsed.strengths, fallback: fallback.strengths),
+			patterns: normalizedOrFallback(parsed.patterns, fallback: fallback.patterns),
+			nextSteps: normalizedOrFallback(parsed.nextSteps, fallback: fallback.nextSteps),
+			caution: trimmedOrFallback(parsed.caution, fallback: fallback.caution)
+		)
+	}
+
+	func generateDailyReviewInsight(context: DailyReviewContext) async -> DailyReviewInsight {
+		let locale = interfaceLocale
+		let fallback = ProfileGuidanceEngine.fallbackDailyReviewInsight(context: context, locale: locale)
+		guard isConfigured else { return fallback }
+
+		let recentTasks = context.tasks
+			.filter { $0.archivedMonthKey == nil }
+			.prefix(8)
+			.map { "\($0.status.rawValue) | \($0.title)" }
+			.joined(separator: "\n")
+
+		let recentNotes = context.notes
+			.sorted { $0.updatedAt > $1.updatedAt }
+			.prefix(5)
+			.map { "\($0.title) | \($0.topic)" }
+			.joined(separator: "\n")
+
+		let recentVitals = context.vitals
+			.sorted { $0.timestamp > $1.timestamp }
+			.prefix(6)
+			.map { "\($0.type.rawValue) | \($0.content)" }
+			.joined(separator: "\n")
+
+		let review = context.review
+		let prompt = locale.isChineseInterface
+			? """
+			你是 NexaLife 的每日复盘导师。根据用户今天填写的内容，输出一个简洁复盘。
+			只输出 JSON，不要输出其他文本：
+			{"summary":"100字内今日总结","guidance":"100字内明日建议"}
+
+			今天的输入：
+			- wins: \(review.wins)
+			- challenges: \(review.challenges)
+			- insight: \(review.insight)
+			- tomorrowPlan: \(review.tomorrowPlan)
+			- energyScore: \(review.energyScore)
+			- clarityScore: \(review.clarityScore)
+
+			近期任务：
+			\(recentTasks)
+
+			近期笔记：
+			\(recentNotes)
+
+			近期 Vitals：
+			\(recentVitals)
+			"""
+			: """
+			You are the daily review mentor inside NexaLife. Based on the user's input for today, return a compact reflection.
+			Return JSON only:
+			{"summary":"today summary under 100 words","guidance":"tomorrow guidance under 100 words"}
+
+			Today's input:
+			- wins: \(review.wins)
+			- challenges: \(review.challenges)
+			- insight: \(review.insight)
+			- tomorrowPlan: \(review.tomorrowPlan)
+			- energyScore: \(review.energyScore)
+			- clarityScore: \(review.clarityScore)
+
+			Recent tasks:
+			\(recentTasks)
+
+			Recent notes:
+			\(recentNotes)
+
+			Recent vitals:
+			\(recentVitals)
+			"""
+
+		guard let parsed = await requestJSON(DailyReviewAIResponse.self, prompt: prompt, maxTokens: 220) else {
+			return fallback
+		}
+
+		return DailyReviewInsight(
+			summary: trimmedOrFallback(parsed.summary, fallback: fallback.summary),
+			guidance: trimmedOrFallback(parsed.guidance, fallback: fallback.guidance)
+		)
+	}
+
 	// MARK: - 通用 API 调用
 	// ✅ 去掉 nonisolated，统一在 @MainActor 上下文，URLSession 本身是线程安全的
 	func callAPI(prompt: String, maxTokens: Int = 300) async -> String? {
-		let rawProvider = UserDefaults.standard.string(forKey: "aiProvider") ?? AIProviderOption.deepseek.rawValue
-		let providerURL = rawProvider == AIProviderOption.qwen.rawValue ? AIProvider.qwen.rawValue : AIProvider.deepseek.rawValue
-		let modelName: String = {
-			if rawProvider == AIProviderOption.qwen.rawValue {
-				return UserDefaults.standard.string(forKey: "aiModelQwen") ?? "qwen-turbo"
-			}
-			return UserDefaults.standard.string(forKey: "aiModelDeepSeek") ?? "deepseek-chat"
-		}()
-		let configuredTimeout = UserDefaults.standard.double(forKey: "aiTimeoutSeconds")
-		let timeout = configuredTimeout > 0 ? configuredTimeout : 30
-		let key = AICredentialStore.readAPIKey()
+		switch await callAPIDetailed(prompt: prompt, maxTokens: maxTokens) {
+		case .success(let text): return text
+		case .failure: return nil
+		}
+	}
 
-		guard !key.isEmpty, let url = URL(string: providerURL) else { return nil }
+	/// Same as `callAPI` but surfaces the underlying HTTP/decoding error so
+	/// callers (e.g. the AI connection test) can show a useful message.
+	func callAPIDetailed(prompt: String, maxTokens: Int = 300) async -> Result<String, AIServiceError> {
+		guard let configuration = requestConfiguration else {
+			return .failure(.notConfigured)
+		}
 
 		let body: [String: Any] = [
-			"model":      modelName,
+			"model":      configuration.modelName,
 			"messages":   [["role": "user", "content": prompt]],
 			"max_tokens": maxTokens
 		]
 
-		var request = URLRequest(url: url)
+		var request = URLRequest(url: configuration.url)
 		request.httpMethod = "POST"
-		request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+		request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
 		request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-		request.timeoutInterval = timeout
+		request.timeoutInterval = configuration.timeout
 		request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
 		do {
-			// ✅ URLSession.data(for:) 是 async，会自动挂起并在后台线程执行网络请求
-			//    返回后自动回到 @MainActor，无需手动切换线程
 			let (data, response) = try await URLSession.shared.data(for: request)
-			guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-				let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+			guard let http = response as? HTTPURLResponse else {
+				return .failure(.transport("No HTTP response"))
+			}
+			guard http.statusCode == 200 else {
+				let bodyText = String(data: data, encoding: .utf8) ?? ""
+				let snippet = String(bodyText.prefix(280))
 				AppLogger.warning(
-					"AI API HTTP error status=\(status) provider=\(rawProvider) model=\(modelName)",
+					"AI API HTTP \(http.statusCode) provider=\(configuration.rawProvider) model=\(configuration.modelName) body=\(snippet)",
 					category: "ai"
 				)
-				return nil
+				return .failure(.http(status: http.statusCode, body: snippet))
 			}
-			let json    = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-			let choices = json?["choices"] as? [[String: Any]]
-			let message = choices?.first?["message"] as? [String: Any]
-			return message?["content"] as? String
+			let decoded = try JSONDecoder().decode(AIChatResponse.self, from: data)
+			guard let text = decoded.choices.first?.message.content else {
+				return .failure(.transport("Empty response"))
+			}
+			return .success(text)
 		} catch {
 			AppLogger.warning(
-				"AI API request failed provider=\(rawProvider) model=\(modelName): \(error.localizedDescription)",
+				"AI API request failed provider=\(configuration.rawProvider) model=\(configuration.modelName): \(error.localizedDescription)",
 				category: "ai"
 			)
-			return nil
+			return .failure(.transport(error.localizedDescription))
 		}
 	}
 
@@ -751,4 +1073,22 @@ class AIService: ObservableObject {
 
 private extension String {
 	var nonEmpty: String? { isEmpty ? nil : self }
+}
+
+enum AIServiceError: Error, LocalizedError {
+	case notConfigured
+	case http(status: Int, body: String)
+	case transport(String)
+
+	var errorDescription: String? {
+		switch self {
+		case .notConfigured:
+			return "AI provider/key is not configured."
+		case .http(let status, let body):
+			let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+			return trimmed.isEmpty ? "HTTP \(status)" : "HTTP \(status) — \(trimmed)"
+		case .transport(let message):
+			return message
+		}
+	}
 }

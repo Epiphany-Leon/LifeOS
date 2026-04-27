@@ -9,6 +9,7 @@ import SwiftUI
 import SwiftData
 
 struct KnowledgeView: View {
+	@Environment(\.modelContext) private var modelContext
 	@Query(sort: \Note.updatedAt, order: .reverse) private var notes: [Note]
 	@Binding var selectedNote: Note?
 
@@ -37,10 +38,13 @@ struct KnowledgeView: View {
 		}
 	}
 
-	private var groupedNotes: [(String, [Note])] {
+	private var groupedNotes: [KnowledgeTopicSection] {
 		let grouped = Dictionary(grouping: filteredNotes) { primaryTopic(of: $0) }
 		return grouped.keys.sorted().map { topic in
-			(topic, (grouped[topic] ?? []).sorted(by: { $0.updatedAt > $1.updatedAt }))
+			KnowledgeTopicSection(
+				topic: topic,
+				items: (grouped[topic] ?? []).sorted(by: { $0.updatedAt > $1.updatedAt })
+			)
 		}
 	}
 
@@ -63,117 +67,104 @@ struct KnowledgeView: View {
 
 	var body: some View {
 		VStack(spacing: 0) {
-			header
-
-			Divider()
-
 			searchBar
 
 			topicFilterBar
 
-			Divider()
+			Rectangle()
+				.fill(WorkspaceTheme.divider)
+				.frame(height: 1)
 
-			List(selection: $selectedNote) {
-				if filteredNotes.isEmpty {
-					ContentUnavailableView(
-						searchText.isEmpty ? "还没有笔记" : "没有匹配结果",
-						systemImage: searchText.isEmpty ? "book.closed" : "magnifyingglass",
-						description: Text(
-							searchText.isEmpty
-							? "在右侧 Detail 栏新建或导入 .md 笔记"
-							: "换个关键词或主题筛选试试"
+			ScrollView {
+				VStack(alignment: .leading, spacing: 18) {
+					LazyVGrid(
+						columns: [GridItem(.adaptive(minimum: 210, maximum: 280), spacing: 14)],
+						alignment: .leading,
+						spacing: 14
+					) {
+						WorkspaceMetricTile(
+							title: "活跃主题",
+							value: "\(topicCount)",
+							subtitle: "已经沉淀为主题的知识入口",
+							icon: "tag",
+							accent: WorkspaceTheme.moduleAccent(for: .knowledge)
 						)
-					)
-				} else if selectedTopics.isEmpty {
-					ForEach(groupedNotes, id: \.0) { topic, items in
-						Section(header: TopicSectionHeader(topic: topic, count: items.count)) {
-							ForEach(items) { note in
-								NoteRowView(note: note)
-									.tag(note)
-									.listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
-							}
-						}
+						WorkspaceMetricTile(
+							title: "未分类",
+							value: "\(uncategorizedCount)",
+							subtitle: "还可以继续整理归类的笔记",
+							icon: "tray.full",
+							accent: .indigo
+						)
+						WorkspaceMetricTile(
+							title: "本周更新",
+							value: "\(updatedThisWeekCount)",
+							subtitle: "最近 7 天有继续推进的知识条目",
+							icon: "clock.arrow.circlepath",
+							accent: .teal
+						)
 					}
-				} else {
-					ForEach(filteredNotes) { note in
-						NoteRowView(note: note)
-							.tag(note)
-							.listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
-					}
+
+					noteWorkspacePanels
 				}
+				.padding(.horizontal, 16)
+				.padding(.vertical, 18)
+				.frame(maxWidth: .infinity, alignment: .leading)
 			}
 		}
-		.navigationTitle("知识 Knowledge")
-		.navigationSplitViewColumnWidth(min: ColumnWidth.min, ideal: ColumnWidth.ideal, max: ColumnWidth.max)
-		.sheet(isPresented: $showTopicList) {
-			TopicFilterListSheet(
-				isPresented: $showTopicList,
-				topics: allTopics,
-				counts: topicCounts(),
-				selectedTopics: $selectedTopics,
-				totalCount: notes.count
-			)
-		}
-		.onChange(of: notes.map(\.id)) { _, ids in
-			if let selected = selectedNote, !ids.contains(selected.id) {
-				selectedNote = nil
+			.sheet(isPresented: $showTopicList) {
+				TopicFilterListSheet(
+					isPresented: $showTopicList,
+					topics: allTopics,
+					counts: topicCounts(),
+					selectedTopics: $selectedTopics,
+					totalCount: notes.count
+				)
 			}
-			let validTopics = Set(allTopics)
-			selectedTopics = selectedTopics.intersection(validTopics)
-		}
+			.onChange(of: notes.map(\.id)) { _, ids in
+				if let selected = selectedNote, !ids.contains(selected.id) {
+					selectedNote = nil
+				}
+				let validTopics = Set(allTopics)
+				selectedTopics = selectedTopics.intersection(validTopics)
+			}
+			.onReceive(NotificationCenter.default.publisher(for: .nexaLifeKnowledgeCreateNote)) { _ in
+				createNote()
+			}
+			.onReceive(NotificationCenter.default.publisher(for: .nexaLifeKnowledgeShowTopicList)) { _ in
+				showTopicList = true
+			}
 	}
 
-	private var header: some View {
-		LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-			KnowledgeMetricCard(
-				title: "笔记总数",
-				value: "\(notes.count)",
-				subtitle: "知识沉淀规模",
-				color: .blue
-			)
-			KnowledgeMetricCard(
-				title: "主题数",
-				value: "\(topicCount)",
-				subtitle: "主题标签覆盖",
-				color: .indigo
-			)
-			KnowledgeMetricCard(
-				title: "本周更新",
-				value: "\(updatedThisWeekCount)",
-				subtitle: "最近活跃度",
-				color: .teal
-			)
-			KnowledgeMetricCard(
-				title: "已分类",
-				value: "\(categorizedCount)",
-				subtitle: "未分类 \(uncategorizedCount)",
-				color: .orange
-			)
-		}
-		.padding(.horizontal, 12)
-		.padding(.vertical, 10)
-		.background(Color(nsColor: .windowBackgroundColor))
+	private func createNote() {
+		let note = Note(title: "新笔记")
+		modelContext.insert(note)
+		selectedNote = note
 	}
 
 	private var searchBar: some View {
 		HStack {
 			Image(systemName: "magnifyingglass")
-				.foregroundStyle(.secondary)
+				.foregroundStyle(WorkspaceTheme.mutedText)
 			TextField("搜索标题、正文或主题…", text: $searchText)
 				.textFieldStyle(.plain)
 			if !searchText.isEmpty {
-				Button {
-					searchText = ""
-				} label: {
-					Image(systemName: "xmark.circle.fill")
-						.foregroundStyle(.secondary)
-				}
-				.buttonStyle(.plain)
+				Image(systemName: "xmark.circle.fill")
+					.foregroundStyle(WorkspaceTheme.mutedText)
+					.contentShape(Rectangle())
+					.onTapGesture {
+						searchText = ""
+					}
 			}
 		}
-		.padding(8)
-		.background(Color(nsColor: .controlBackgroundColor))
-		.clipShape(RoundedRectangle(cornerRadius: 8))
+		.padding(.horizontal, 14)
+		.padding(.vertical, 12)
+		.background(WorkspaceTheme.elevatedSurface)
+		.clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+		.overlay(
+			RoundedRectangle(cornerRadius: 16, style: .continuous)
+				.stroke(WorkspaceTheme.border, lineWidth: 1)
+		)
 		.padding(.horizontal, 12)
 		.padding(.vertical, 8)
 	}
@@ -203,20 +194,46 @@ struct KnowledgeView: View {
 				.padding(.vertical, 2)
 			}
 
-			Button {
-				showTopicList = true
-			} label: {
-				Image(systemName: "list.bullet")
-					.font(.subheadline)
-					.padding(.horizontal, 10)
-					.padding(.vertical, 7)
-					.background(Color(nsColor: .controlBackgroundColor))
-					.clipShape(Capsule())
-			}
-			.buttonStyle(.plain)
+			Image(systemName: "list.bullet")
+				.font(.subheadline)
+				.padding(.horizontal, 10)
+				.padding(.vertical, 7)
+				.background(WorkspaceTheme.elevatedSurface)
+				.overlay(
+					Capsule()
+						.stroke(WorkspaceTheme.border, lineWidth: 1)
+				)
+				.clipShape(Capsule())
+				.contentShape(Capsule())
+				.onTapGesture {
+					showTopicList = true
+				}
 		}
 		.padding(.horizontal, 12)
 		.padding(.vertical, 8)
+	}
+
+	@ViewBuilder
+	private var noteWorkspacePanels: some View {
+		if filteredNotes.isEmpty {
+			KnowledgeEmptyPanel(searchText: searchText)
+		} else if selectedTopics.isEmpty {
+			KnowledgeTopicPanels(
+				sections: groupedNotes,
+				selectedNote: selectedNote,
+				onSelect: { note in
+					selectedNote = note
+				}
+			)
+		} else {
+			KnowledgeFilteredPanel(
+				notes: filteredNotes,
+				selectedNote: selectedNote,
+				onSelect: { note in
+					selectedNote = note
+				}
+			)
+		}
 	}
 
 	private func topicCounts() -> [String: Int] {
@@ -247,6 +264,125 @@ struct KnowledgeView: View {
 	}
 }
 
+private struct KnowledgeTopicSection: Identifiable {
+	let topic: String
+	let items: [Note]
+
+	var id: String { topic }
+}
+
+private struct KnowledgeEmptyPanel: View {
+	var searchText: String
+
+	var body: some View {
+		WorkspaceCard(accent: WorkspaceTheme.moduleAccent(for: .knowledge), padding: 24, cornerRadius: 24, shadowY: 8) {
+			ContentUnavailableView(
+				searchText.isEmpty ? "还没有笔记" : "没有匹配结果",
+				systemImage: searchText.isEmpty ? "book.closed" : "magnifyingglass",
+				description: Text(
+					searchText.isEmpty
+					? "点击右上角新建笔记"
+					: "换个关键词或主题筛选试试"
+				)
+			)
+			.frame(maxWidth: .infinity)
+			.padding(.vertical, 28)
+		}
+	}
+}
+
+private struct KnowledgeTopicPanels: View {
+	var sections: [KnowledgeTopicSection]
+	var selectedNote: Note?
+	var onSelect: (Note) -> Void
+
+	private func isSelected(_ note: Note) -> Bool {
+		selectedNote?.id == note.id
+	}
+
+	var body: some View {
+		LazyVGrid(
+			columns: [GridItem(.adaptive(minimum: 320, maximum: 420), spacing: 14)],
+			alignment: .leading,
+			spacing: 14
+		) {
+			ForEach(sections) { section in
+				WorkspaceCard(accent: WorkspaceTheme.moduleAccent(for: .knowledge), padding: 18, cornerRadius: 24, shadowY: 8) {
+					VStack(alignment: .leading, spacing: 12) {
+						WorkspacePanelHeader(
+							title: section.topic,
+							subtitle: "主题知识卡组",
+							accent: WorkspaceTheme.moduleAccent(for: .knowledge),
+							icon: "tag",
+							value: "\(section.items.count)"
+						)
+
+						ForEach(section.items) { note in
+							WorkspaceSelectableCard(
+								accent: WorkspaceTheme.moduleAccent(for: .knowledge),
+								isSelected: isSelected(note),
+								cornerRadius: 18,
+								padding: 14
+							) {
+								NoteRowView(note: note)
+							}
+							.contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+							.onTapGesture {
+								onSelect(note)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+private struct KnowledgeFilteredPanel: View {
+	var notes: [Note]
+	var selectedNote: Note?
+	var onSelect: (Note) -> Void
+
+	private func isSelected(_ note: Note) -> Bool {
+		selectedNote?.id == note.id
+	}
+
+	var body: some View {
+		WorkspaceCard(accent: WorkspaceTheme.moduleAccent(for: .knowledge), padding: 20, cornerRadius: 24, shadowY: 8) {
+			VStack(alignment: .leading, spacing: 14) {
+				WorkspacePanelHeader(
+					title: "Filtered Notes",
+					subtitle: "当前主题筛选下的知识条目",
+					accent: WorkspaceTheme.moduleAccent(for: .knowledge),
+					icon: "line.3.horizontal.decrease.circle",
+					value: "\(notes.count)"
+				)
+
+				LazyVGrid(
+					columns: [GridItem(.adaptive(minimum: 280, maximum: 360), spacing: 12)],
+					alignment: .leading,
+					spacing: 12
+				) {
+					ForEach(notes) { note in
+						WorkspaceSelectableCard(
+							accent: WorkspaceTheme.moduleAccent(for: .knowledge),
+							isSelected: isSelected(note),
+							cornerRadius: 18,
+							padding: 14
+						) {
+							NoteRowView(note: note)
+						}
+						.contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+						.onTapGesture {
+							onSelect(note)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 private struct TopicFilterChip: View {
 	var label: String
 	var count: Int
@@ -254,25 +390,28 @@ private struct TopicFilterChip: View {
 	var action: () -> Void
 
 	var body: some View {
-		Button(action: action) {
-			HStack(spacing: 6) {
-				Text(label)
-					.font(.caption)
-					.fontWeight(isSelected ? .semibold : .regular)
-				Text("\(count)")
-					.font(.caption2)
-					.padding(.horizontal, 5)
-					.padding(.vertical, 1)
-					.background(isSelected ? Color.white.opacity(0.28) : Color.secondary.opacity(0.15))
-					.clipShape(Capsule())
-			}
-			.padding(.horizontal, 10)
-			.padding(.vertical, 5)
-			.background(isSelected ? Color.accentColor : Color(nsColor: .controlBackgroundColor))
-			.foregroundStyle(isSelected ? .white : .primary)
-			.clipShape(Capsule())
+		HStack(spacing: 6) {
+			Text(label)
+				.font(.caption)
+				.fontWeight(isSelected ? .semibold : .regular)
+			Text("\(count)")
+				.font(.caption2)
+				.padding(.horizontal, 5)
+				.padding(.vertical, 1)
+				.background(isSelected ? Color.white.opacity(0.28) : Color.secondary.opacity(0.15))
+				.clipShape(Capsule())
 		}
-		.buttonStyle(.plain)
+		.padding(.horizontal, 10)
+		.padding(.vertical, 5)
+		.background(isSelected ? Color.accentColor : Color(nsColor: .controlBackgroundColor))
+		.foregroundStyle(isSelected ? .white : .primary)
+		.overlay(
+			Capsule()
+				.stroke(isSelected ? Color.accentColor : WorkspaceTheme.border, lineWidth: 1)
+		)
+		.clipShape(Capsule())
+		.contentShape(Capsule())
+		.onTapGesture(perform: action)
 	}
 }
 
@@ -359,22 +498,6 @@ private struct TopicFilterListSheet: View {
 	}
 }
 
-private struct TopicSectionHeader: View {
-	var topic: String
-	var count: Int
-
-	var body: some View {
-		HStack {
-			Label(topic, systemImage: "tag")
-				.font(.subheadline.bold())
-			Spacer()
-			Text("\(count) 条")
-				.font(.caption)
-				.foregroundStyle(.secondary)
-		}
-	}
-}
-
 private struct NoteRowView: View {
 	var note: Note
 
@@ -392,13 +515,22 @@ private struct NoteRowView: View {
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 6) {
-			Text(note.title.isEmpty ? "无标题" : note.title)
-				.font(.headline)
-				.lineLimit(1)
+			HStack(alignment: .top, spacing: 8) {
+				Text(note.title.isEmpty ? "无标题" : note.title)
+					.font(.headline)
+					.foregroundStyle(WorkspaceTheme.strongText)
+					.lineLimit(1)
+
+				Spacer(minLength: 0)
+
+				Text(note.updatedAt, style: .relative)
+					.font(.caption2)
+					.foregroundStyle(.tertiary)
+			}
 
 			Text(previewText)
 				.font(.caption)
-				.foregroundStyle(.secondary)
+				.foregroundStyle(WorkspaceTheme.mutedText)
 				.lineLimit(2)
 
 			HStack(spacing: 6) {
@@ -417,41 +549,8 @@ private struct NoteRowView: View {
 						.foregroundStyle(.secondary)
 				}
 				Spacer()
-				Text(note.updatedAt, style: .relative)
-					.font(.caption2)
-					.foregroundStyle(.tertiary)
 			}
 		}
 		.frame(maxWidth: .infinity, alignment: .leading)
-		.padding(.vertical, 4)
-	}
-}
-
-private struct KnowledgeMetricCard: View {
-	var title: String
-	var value: String
-	var subtitle: String
-	var color: Color
-
-	var body: some View {
-		VStack(alignment: .leading, spacing: 4) {
-			Text(title)
-				.font(.caption)
-				.foregroundStyle(.secondary)
-			Text(value)
-				.font(.system(size: 20, weight: .bold))
-				.foregroundStyle(color)
-				.lineLimit(1)
-				.minimumScaleFactor(0.7)
-			Text(subtitle)
-				.font(.caption2)
-				.foregroundStyle(.secondary)
-				.lineLimit(1)
-		}
-		.frame(maxWidth: .infinity, alignment: .leading)
-		.padding(.horizontal, 10)
-		.padding(.vertical, 8)
-		.background(color.opacity(0.1))
-		.clipShape(RoundedRectangle(cornerRadius: 10))
 	}
 }

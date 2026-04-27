@@ -71,15 +71,18 @@ enum InboxRoutingService {
 			return true
 
 		case .vitals:
+			let vitalsType = inferVitalsType(from: trimmed)
 			let entry = VitalsEntry(
 				content: trimmed,
-				type: .motivation,
-				isProtected: false
+				type: vitalsType,
+				category: vitalsType == .coreCode ? "未分类" : "",
+				isProtected: vitalsType == .coreCode || vitalsType == .treehol,
+				moodScore: vitalsType == .motivation || vitalsType == .emotion ? 3 : 0
 			)
 			modelContext.insert(entry)
 			return true
 
-		case .dashboard, .inbox:
+		case .dashboard, .inbox, .trash:
 			return false
 		}
 	}
@@ -161,5 +164,30 @@ enum InboxRoutingService {
 		let normalized = content.lowercased()
 		let keywords = ["联系人", "通讯录", "名片", "电话", "微信", "加好友", "network", "contact"]
 		return keywords.contains { normalized.contains($0) }
+	}
+
+	private static func inferVitalsType(from content: String) -> VitalsEntryType {
+		let normalized = content.lowercased()
+		let coreKeywords = ["原则", "守则", "底线", "价值观", "准则", "原则性", "core code"]
+		if coreKeywords.contains(where: { normalized.contains($0) }) {
+			return .coreCode
+		}
+
+		let emotionKeywords = ["情绪", "焦虑", "难过", "开心", "低落", "烦", "崩溃", "委屈", "激动", "emotion", "mood"]
+		if emotionKeywords.contains(where: { normalized.contains($0) }) {
+			return .emotion
+		}
+
+		let reflectionKeywords = ["复盘", "总结", "今天", "记录", "学到了", "反思", "review", "reflection"]
+		if reflectionKeywords.contains(where: { normalized.contains($0) }) {
+			return .reflection
+		}
+
+		let privateKeywords = ["树洞", "秘密", "不能说", "不想被看见", "private", "secret"]
+		if privateKeywords.contains(where: { normalized.contains($0) }) {
+			return .treehol
+		}
+
+		return .motivation
 	}
 }

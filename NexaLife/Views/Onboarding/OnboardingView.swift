@@ -10,413 +10,545 @@ import SwiftData
 import AppKit
 
 struct OnboardingView: View {
-	private enum EmailMode: String, CaseIterable, Identifiable {
-		case create
-		case signIn
-
-		var id: String { rawValue }
-
-		func title(for locale: Locale) -> String {
-			switch self {
-			case .create:
-				return AppBrand.localized("创建 Profile", "Create Profile", locale: locale)
-			case .signIn:
-				return AppBrand.localized("登录已有 Profile", "Sign In to Existing Profile", locale: locale)
-			}
-		}
-
-		var verificationPurpose: EmailVerificationPurpose {
-			switch self {
-			case .create:
-				return .createAccount
-			case .signIn:
-				return .signIn
-			}
-		}
-	}
-
 	@EnvironmentObject private var appState: AppState
 	@EnvironmentObject private var oauthService: OAuthService
 	@Environment(\.modelContext) private var modelContext
 	@Environment(\.locale) private var locale
 
-	@State private var step: OnboardingStep = .selectAuth
+	@State private var step: OnboardingStep = .welcome
 	@State private var nickname: String = ""
-	@State private var email: String = ""
-	@State private var emailMode: EmailMode = .create
-	@State private var verificationCode: String = ""
-	@State private var emailAnnouncementOptIn = true
-	@State private var verificationExpiresAt: Date?
-	@State private var verificationPreviewCode: String?
-	@State private var isSendingVerificationCode = false
 	@State private var draftAccount: AuthenticatedAccount?
 	@State private var statusMessage: String = ""
 	@State private var statusIsError = false
+	@State private var aiDraftKey: String = ""
+	@State private var aiDraftProvider: AIProviderOption = .deepseek
 
 	var body: some View {
-		VStack(spacing: 0) {
-			switch step {
-			case .selectAuth:
-				accountSelectionView
-			case .createNickname:
-				profileReviewView
-			case .done:
-				EmptyView()
+		ZStack {
+			backgroundLayer
+
+			HStack(spacing: 32) {
+				brandRail
+				stageWindow
 			}
+			.padding(44)
 		}
-		.frame(width: 760, height: 640)
-		.background(
-			LinearGradient(
-				colors: [Color(nsColor: .windowBackgroundColor), Color.accentColor.opacity(0.08)],
-				startPoint: .topLeading,
-				endPoint: .bottomTrailing
-			)
-		)
+		.frame(width: 1080, height: 720)
+		.background(WorkspaceTheme.canvas)
 	}
 
-	private var accountSelectionView: some View {
-		ScrollView {
-			VStack(alignment: .leading, spacing: 22) {
-				VStack(alignment: .leading, spacing: 8) {
-					Text(AppBrand.localized("创建你的\(AppBrand.displayName(for: locale)) Profile", "Create Your \(AppBrand.displayName(for: locale)) Profile", locale: locale))
-						.font(.system(size: 30, weight: .bold))
+	private var backgroundLayer: some View {
+		ZStack {
+			WorkspaceTheme.canvas
+				.ignoresSafeArea()
+
+			Circle()
+				.fill(WorkspaceTheme.accentWash)
+				.frame(width: 420, height: 420)
+				.blur(radius: 10)
+				.offset(x: -320, y: -190)
+
+			Circle()
+				.fill(WorkspaceTheme.secondaryWash)
+				.frame(width: 340, height: 340)
+				.blur(radius: 16)
+				.offset(x: 360, y: 220)
+		}
+	}
+
+	private var brandRail: some View {
+		WorkspaceCard(accent: WorkspaceTheme.accent, padding: 30, cornerRadius: 30, shadowY: 16) {
+			VStack(alignment: .leading, spacing: 24) {
+				HStack(alignment: .center, spacing: 8) {
+					WorkspacePill(
+						title: "NexaLife",
+						icon: "sparkles",
+						accent: WorkspaceTheme.accent
+					)
+					Spacer(minLength: 0)
+					languageToggle
+				}
+
+				VStack(alignment: .leading, spacing: 14) {
+					Text(AppBrand.localized("欢迎进入 NexaLife", "Welcome to NexaLife", locale: locale))
+						.font(.system(size: 32, weight: .bold, design: .rounded))
+						.foregroundStyle(WorkspaceTheme.strongText)
+						.lineLimit(2)
+						.minimumScaleFactor(0.7)
+						.fixedSize(horizontal: false, vertical: true)
+
 					Text(
 						AppBrand.localized(
-							"支持 Apple ID、任意邮箱和本地导入。你可以创建 Apple Profile、邮箱验证 Profile，或仅保留本机 Profile。",
-							"Apple ID, any email address, and local import are all supported. You can create an Apple profile, an email-verified profile, or keep everything local.",
+							"先决定你的存储方式，再建立第一份 Profile。整个进入流程会和主界面共用同一套简洁、优雅、克制的工作区语言。",
+							"Choose how you want to start, then create your first profile. The entry flow now shares the same calm, refined visual language as the workspace itself.",
 							locale: locale
 						)
 					)
-						.foregroundStyle(.secondary)
-						.fixedSize(horizontal: false, vertical: true)
+					.font(.body)
+					.foregroundStyle(WorkspaceTheme.mutedText)
+					.fixedSize(horizontal: false, vertical: true)
 				}
 
-				HStack(alignment: .top, spacing: 16) {
-					accountCard(
-						title: "Apple ID",
-						subtitle: AppBrand.localized(
-							"Apple Profile / iCloud 同步开发中，当前版本暂不开放。",
-							"Apple Profile and iCloud sync are still in development and are not available in this build.",
-							locale: locale
-						),
-						systemImage: "applelogo"
-					) {
-						Button(AppBrand.localized("Apple ID（开发中）", "Apple ID (In Development)", locale: locale)) {}
-						.buttonStyle(.borderedProminent)
-						.disabled(true)
-					}
-
-					emailAccountCard
-				}
-
-				accountCard(
-					title: AppBrand.localized("导入已有数据", "Import Existing Data", locale: locale),
-					subtitle: AppBrand.localized(
-						"支持导入之前导出的 \(AppBrand.displayName(for: locale)) JSON 数据包，适合迁移旧版本或切换设备。",
-						"Import a previously exported \(AppBrand.displayName(for: locale)) JSON archive when migrating from an older build or switching devices.",
-						locale: locale
-					),
-					systemImage: "square.and.arrow.down"
-				) {
-					HStack(spacing: 12) {
-						Button(AppBrand.localized("导入本地数据", "Import Local Data", locale: locale)) {
-							importLocalArchive()
-						}
-						.buttonStyle(.borderedProminent)
-
-						Button(AppBrand.localized("创建本机 Profile", "Create Local Profile", locale: locale)) {
-							startLocalAccount()
-						}
-						.buttonStyle(.bordered)
-					}
-				}
-
-				if !statusMessage.isEmpty {
-					Label(statusMessage, systemImage: statusIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-						.foregroundStyle(statusIsError ? .orange : .green)
-						.font(.subheadline)
-				}
-			}
-			.padding(32)
-		}
-	}
-
-	private var emailAccountCard: some View {
-		accountCard(
-			title: AppBrand.localized("邮箱 Profile", "Email Profile", locale: locale),
-			subtitle: AppBrand.localized(
-				"不限 Gmail。先发送验证码到邮箱，再输入验证码完成创建或登录。",
-				"Works with any mailbox. Send a verification code first, then enter it to create a profile or sign in.",
-				locale: locale
-			),
-			systemImage: "envelope.fill"
-		) {
-			VStack(alignment: .leading, spacing: 12) {
-				Picker("", selection: $emailMode) {
-					ForEach(EmailMode.allCases) { mode in
-						Text(mode.title(for: locale)).tag(mode)
-					}
-				}
-				.pickerStyle(.segmented)
-				.onChange(of: emailMode) { _, _ in
-					resetEmailVerificationState()
-				}
-
-				if emailMode == .create {
-					TextField(AppBrand.localized("昵称", "Profile Name", locale: locale), text: $nickname)
-						.textFieldStyle(.roundedBorder)
-				}
-
-				TextField(AppBrand.localized("邮箱地址", "Email Address", locale: locale), text: $email)
-					.textFieldStyle(.roundedBorder)
-					.onChange(of: email) { _, _ in
-						resetEmailVerificationState()
-					}
-
-				if emailMode == .create {
-					Toggle(AppBrand.localized("接收版本更新与重要通知", "Receive release updates and important notices", locale: locale), isOn: $emailAnnouncementOptIn)
-						.font(.subheadline)
-				}
-
-				if verificationExpiresAt == nil {
-					Button(AppBrand.localized("发送验证码", "Send Verification Code", locale: locale)) {
-						Task {
-							await sendVerificationCode()
-						}
-					}
-					.buttonStyle(.borderedProminent)
-					.disabled(isSendingVerificationCode || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-				} else {
-					TextField(AppBrand.localized("输入 6 位验证码", "Enter the 6-digit code", locale: locale), text: $verificationCode)
-						.textFieldStyle(.roundedBorder)
-
-					HStack(spacing: 10) {
-						Button(AppBrand.localized("验证并继续", "Verify and Continue", locale: locale)) {
-							completeEmailVerification()
-						}
-						.buttonStyle(.borderedProminent)
-						.disabled(verificationCode.trimmingCharacters(in: .whitespacesAndNewlines).count < 6)
-
-						Button(AppBrand.localized("重新发送", "Resend", locale: locale)) {
-							Task {
-								await sendVerificationCode()
-							}
-						}
-						.buttonStyle(.bordered)
-						.disabled(isSendingVerificationCode)
-					}
-
-					if let verificationExpiresAt {
-						Text(
-							AppBrand.localized(
-								"验证码有效期至 \(verificationExpiresAt.formatted(date: .omitted, time: .shortened))",
-								"Code expires at \(verificationExpiresAt.formatted(date: .omitted, time: .shortened))",
-								locale: locale
-							)
-						)
-							.font(.caption)
-							.foregroundStyle(.secondary)
-					}
-
-					if let verificationPreviewCode {
-						Text(
-							AppBrand.localized(
-								"当前未配置邮件发送服务，开发预览验证码：\(verificationPreviewCode)",
-								"Email delivery is not configured yet. Preview code: \(verificationPreviewCode)",
-								locale: locale
-							)
-						)
-							.font(.caption)
-							.foregroundStyle(.orange)
-					}
-				}
-			}
-		}
-	}
-
-	private var profileReviewView: some View {
-			VStack(alignment: .leading, spacing: 24) {
-			VStack(alignment: .leading, spacing: 8) {
-				Text(AppBrand.localized("确认 Profile 资料", "Confirm Profile Details", locale: locale))
-					.font(.system(size: 26, weight: .bold))
-				Text(
-					AppBrand.localized(
-						"昵称会显示在 Dashboard 与侧边栏中，后续可在 Profile 中修改。",
-						"Your profile name appears on the dashboard and in the sidebar. You can update it later in Profile settings.",
-						locale: locale
-					)
-				)
-					.foregroundStyle(.secondary)
-			}
-
-			GroupBox {
 				VStack(alignment: .leading, spacing: 12) {
-					HStack {
-						Text(AppBrand.localized("Profile 类型", "Profile Type", locale: locale))
-							.foregroundStyle(.secondary)
-						Spacer()
-						Text(draftAccount?.provider.label(for: locale) ?? AccountProviderOption.localOnly.label(for: locale))
-					}
-					if let email = draftAccount?.email, !email.isEmpty {
-						HStack {
-							Text(AppBrand.localized("邮箱", "Email", locale: locale))
-								.foregroundStyle(.secondary)
-							Spacer()
-							Text(email)
-						}
-					}
-					HStack {
-						Text("Profile ID")
-							.foregroundStyle(.secondary)
-						Spacer()
-						Text(draftAccount?.identifier ?? AppBrand.localized("未生成", "Not generated yet", locale: locale))
-							.font(.system(.body, design: .monospaced))
-							.lineLimit(1)
-							.truncationMode(.middle)
+					brandPoint(
+						icon: "internaldrive",
+						title: AppBrand.localized("Local first", "Local first", locale: locale),
+						subtitle: AppBrand.localized("先把数据稳稳落在这台 Mac 上，再考虑迁移与同步。", "Start safely on this Mac, then decide about migration and sync later.", locale: locale)
+					)
+					brandPoint(
+						icon: "square.and.arrow.down",
+						title: AppBrand.localized("Import friendly", "Import friendly", locale: locale),
+						subtitle: AppBrand.localized("已有备份可以直接导回，不必从零开始。", "Bring back an existing archive without starting from zero.", locale: locale)
+					)
+					brandPoint(
+						icon: "rectangle.split.2x1",
+						title: AppBrand.localized("Unified workspace", "Unified workspace", locale: locale),
+						subtitle: AppBrand.localized("进入后的双栏工作区会沿用同样的卡片、边框和强调色。", "The two-column workspace keeps the same card, border, and accent language.", locale: locale)
+					)
+				}
+
+				Spacer(minLength: 0)
+
+				WorkspaceCard(accent: .blue, padding: 18, cornerRadius: 24, shadowY: 6) {
+					VStack(alignment: .leading, spacing: 10) {
+						Text(AppBrand.localized("当前流程", "Current flow", locale: locale))
+							.font(.caption.weight(.bold))
+							.foregroundStyle(WorkspaceTheme.accent)
+						Text("Welcome → Local Mode → Profile → AI Mentor")
+							.font(.headline)
+							.foregroundStyle(WorkspaceTheme.strongText)
+							.fixedSize(horizontal: false, vertical: true)
+						Text(
+							AppBrand.localized(
+								"Cloud Mode 继续保留为开发中入口，这个版本先把 Local Mode 做到稳定、清晰、好用。",
+								"Cloud Mode remains visible as an in-progress entry while this build focuses on making the local path stable and polished.",
+								locale: locale
+							)
+						)
+						.font(.caption)
+						.foregroundStyle(WorkspaceTheme.mutedText)
+						.fixedSize(horizontal: false, vertical: true)
 					}
 				}
-				.padding(.top, 4)
+			}
+		}
+		.frame(width: 350, alignment: .topLeading)
+	}
+
+	private var stageWindow: some View {
+		WorkspaceCard(accent: WorkspaceTheme.accent, padding: 32, cornerRadius: 32, shadowY: 18) {
+			VStack(alignment: .leading, spacing: 28) {
+				stageHeader
+
+				switch step {
+				case .welcome:
+					welcomeStage
+				case .localMode:
+					localModeStage
+				case .createNickname:
+					profileStage
+				case .aiSetup:
+					aiSetupStage
+				case .aiKeyEntry:
+					aiKeyEntryStage
+				case .done:
+					EmptyView()
+				}
+
+				if !statusMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+					statusBanner
+				}
+			}
+		}
+		.frame(width: 654, alignment: .topLeading)
+	}
+
+	private var languageToggle: some View {
+		Menu {
+			ForEach(AppLanguagePreference.allCases) { preference in
+				Button {
+					appState.selectedLanguagePreference = preference
+				} label: {
+					HStack {
+						Text(languageLabel(for: preference))
+						if appState.selectedLanguagePreference == preference {
+							Image(systemName: "checkmark")
+						}
+					}
+				}
+			}
+		} label: {
+			HStack(spacing: 4) {
+				Image(systemName: "globe")
+					.font(.system(size: 11, weight: .semibold))
+				Text(languageShortLabel)
+					.font(.caption.weight(.semibold))
+			}
+			.padding(.horizontal, 9)
+			.padding(.vertical, 5)
+			.background(WorkspaceTheme.elevatedSurface)
+			.clipShape(Capsule())
+			.overlay(
+				Capsule().stroke(WorkspaceTheme.border, lineWidth: 1)
+			)
+			.foregroundStyle(WorkspaceTheme.strongText)
+		}
+		.menuStyle(.borderlessButton)
+		.menuIndicator(.hidden)
+		.fixedSize()
+		.help(AppBrand.localized("切换界面语言", "Switch interface language", locale: locale))
+	}
+
+	private var languageShortLabel: String {
+		switch appState.selectedLanguagePreference {
+		case .system:            return AppBrand.localized("自动", "Auto", locale: locale)
+		case .simplifiedChinese: return "中"
+		case .english:           return "EN"
+		}
+	}
+
+	private func languageLabel(for preference: AppLanguagePreference) -> String {
+		switch preference {
+		case .system:
+			return AppBrand.localized("跟随系统", "Follow System", locale: locale)
+		case .simplifiedChinese:
+			return AppBrand.localized("简体中文", "简体中文 (Simplified Chinese)", locale: locale)
+		case .english:
+			return AppBrand.localized("English (英文)", "English", locale: locale)
+		}
+	}
+
+	private var stageHeader: some View {
+		HStack(spacing: 10) {
+			stageStepCapsule(
+				index: 1,
+				title: AppBrand.localized("选择模式", "Choose mode", locale: locale),
+				isActive: step == .welcome || step == .localMode
+			)
+			stageStepCapsule(
+				index: 2,
+				title: AppBrand.localized("建立资料", "Create profile", locale: locale),
+				isActive: step == .createNickname
+			)
+			stageStepCapsule(
+				index: 3,
+				title: AppBrand.localized("AI Mentor", "AI Mentor", locale: locale),
+				isActive: step == .aiSetup || step == .aiKeyEntry
+			)
+			Spacer(minLength: 0)
+		}
+	}
+
+	private var welcomeStage: some View {
+		VStack(alignment: .center, spacing: 26) {
+			Spacer(minLength: 6)
+
+			WorkspaceSectionTitle(
+				eyebrow: "Welcome",
+				title: AppBrand.localized("选择你的起点", "Choose your starting point", locale: locale),
+				subtitle: AppBrand.localized("先进入 Local Mode。Cloud Mode 保留入口，但当前版本仍处于开发中。", "Start with Local Mode. Cloud Mode stays visible here, but it is still in development in this build.", locale: locale),
+				accent: WorkspaceTheme.accent
+			)
+			.frame(maxWidth: 440)
+
+			VStack(spacing: 14) {
+				stageActionCard(
+					title: "Local Mode",
+					subtitle: AppBrand.localized("在本机建立第一份 Profile，立刻开始使用。", "Create your first profile on this Mac and start right away.", locale: locale),
+					icon: "internaldrive",
+					accent: WorkspaceTheme.accent
+				) {
+					statusMessage = ""
+					statusIsError = false
+					step = .localMode
+				}
+
+				stageActionCard(
+					title: "Cloud Mode",
+					subtitle: AppBrand.localized("仍在开发中，后续版本再开放。", "Still in development for a later build.", locale: locale),
+					icon: "cloud",
+					accent: .orange
+				) {
+					statusMessage = AppBrand.localized("Cloud Mode 正在开发中，当前请先使用 Local Mode。", "Cloud Mode is still in development. Please use Local Mode for now.", locale: locale)
+					statusIsError = false
+				}
+			}
+			.frame(maxWidth: 420)
+
+			Spacer(minLength: 0)
+		}
+		.frame(maxWidth: .infinity, alignment: .center)
+	}
+
+	private var localModeStage: some View {
+		VStack(alignment: .leading, spacing: 22) {
+			stageBackLink {
+				statusMessage = ""
+				statusIsError = false
+				step = .welcome
 			}
 
-			VStack(alignment: .leading, spacing: 8) {
+			WorkspaceSectionTitle(
+				eyebrow: "Local Mode",
+				title: AppBrand.localized("创建新的本机资料，或导入旧档案", "Create a new local profile, or import an existing archive", locale: locale),
+				subtitle: AppBrand.localized("如果你是第一次使用，就创建一份新的 Profile；如果你已有 JSON 备份，就直接导回。", "Create a fresh profile if this is your first time, or restore directly from your JSON archive if you already have one.", locale: locale),
+				accent: .green
+			)
+
+			VStack(spacing: 14) {
+				stageActionCard(
+					title: AppBrand.localized("创建本机 Profile", "Create local profile", locale: locale),
+					subtitle: AppBrand.localized("创建本机档案，并在下一步确认昵称。", "Start a local profile and confirm your display name next.", locale: locale),
+					icon: "person.crop.circle.badge.plus",
+					accent: WorkspaceTheme.accent
+				) {
+					startLocalAccount()
+				}
+
+				stageActionCard(
+					title: AppBrand.localized("导入 Profile", "Import profile", locale: locale),
+					subtitle: AppBrand.localized("导入旧版本导出的 JSON 数据包。", "Restore an exported JSON archive from a previous build.", locale: locale),
+					icon: "square.and.arrow.down",
+					accent: .green
+				) {
+					importLocalArchive()
+				}
+			}
+
+			Spacer(minLength: 0)
+		}
+	}
+
+	private var profileStage: some View {
+		VStack(alignment: .leading, spacing: 20) {
+			stageBackLink {
+				step = .localMode
+			}
+
+			WorkspaceSectionTitle(
+				eyebrow: AppBrand.localized("Profile", "Profile", locale: locale),
+				title: AppBrand.localized("确认你的显示名称", "Confirm your display name", locale: locale),
+				subtitle: AppBrand.localized("昵称会出现在 Dashboard 问候语、侧边栏和后续引导层中，之后仍可修改。", "Your profile name appears in the dashboard greeting, sidebar, and guidance layer. You can still change it later.", locale: locale),
+				accent: WorkspaceTheme.accent
+			)
+
+			WorkspaceCard(accent: .teal, padding: 20, cornerRadius: 24, shadowY: 6) {
+				VStack(alignment: .leading, spacing: 14) {
+					profileFactRow(
+						title: AppBrand.localized("Profile 类型", "Profile type", locale: locale),
+						value: draftAccount?.provider.label(for: locale) ?? AccountProviderOption.localOnly.label(for: locale)
+					)
+					profileFactRow(
+						title: "Profile ID",
+						value: draftAccount?.identifier ?? AppBrand.localized("未生成", "Not generated yet", locale: locale),
+						monospaced: true
+					)
+					if let email = draftAccount?.email, !email.isEmpty {
+						profileFactRow(
+							title: AppBrand.localized("邮箱", "Email", locale: locale),
+							value: email
+						)
+					}
+				}
+			}
+
+			VStack(alignment: .leading, spacing: 10) {
 				Text(AppBrand.localized("昵称", "Profile Name", locale: locale))
 					.font(.headline)
+					.foregroundStyle(WorkspaceTheme.strongText)
+
 				TextField(AppBrand.localized("例如：Lihong", "For example: Lihong", locale: locale), text: $nickname)
-					.textFieldStyle(.roundedBorder)
+					.textFieldStyle(.plain)
+					.padding(.horizontal, 16)
+					.padding(.vertical, 14)
+					.background(
+						RoundedRectangle(cornerRadius: 18, style: .continuous)
+							.fill(WorkspaceTheme.elevatedSurface)
+					)
+					.overlay(
+						RoundedRectangle(cornerRadius: 18, style: .continuous)
+							.stroke(WorkspaceTheme.border, lineWidth: 1)
+					)
 			}
 
 			HStack(spacing: 12) {
-				Button(AppBrand.localized("返回", "Back", locale: locale)) {
-					step = .selectAuth
+				secondaryTextAction(AppBrand.localized("返回", "Back", locale: locale)) {
+					step = .localMode
 				}
-				.buttonStyle(.bordered)
 
-				Spacer()
+				Spacer(minLength: 0)
 
-				Button(AppBrand.localized("开始使用\(AppBrand.displayName(for: locale))", "Start Using \(AppBrand.displayName(for: locale))", locale: locale)) {
+				primaryTextAction(
+					AppBrand.localized("开始使用 \(AppBrand.displayName(for: locale))", "Start Using \(AppBrand.displayName(for: locale))", locale: locale),
+					isDisabled: nickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+				) {
 					completeAccountSetup()
 				}
-				.buttonStyle(.borderedProminent)
-				.disabled(nickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 			}
 
-			if !statusMessage.isEmpty {
-				Label(statusMessage, systemImage: statusIsError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-					.foregroundStyle(statusIsError ? .orange : .green)
-					.font(.subheadline)
-			}
+			Spacer(minLength: 0)
 		}
-		.padding(32)
 	}
 
-	private func accountCard<Content: View>(
-		title: String,
-		subtitle: String,
-		systemImage: String,
-		@ViewBuilder content: () -> Content
-	) -> some View {
-		VStack(alignment: .leading, spacing: 16) {
-			Label(title, systemImage: systemImage)
-				.font(.headline)
-			Text(subtitle)
+	private var statusBanner: some View {
+		HStack(alignment: .top, spacing: 10) {
+			Image(systemName: statusIsError ? "exclamationmark.triangle.fill" : "info.circle.fill")
+				.font(.system(size: 13, weight: .semibold))
+				.foregroundStyle(statusIsError ? .orange : WorkspaceTheme.accent)
+				.padding(.top, 2)
+
+			Text(statusMessage)
+				.font(.subheadline)
 				.foregroundStyle(.secondary)
 				.fixedSize(horizontal: false, vertical: true)
-			content()
 		}
-		.padding(20)
 		.frame(maxWidth: .infinity, alignment: .leading)
-		.background(Color(nsColor: .controlBackgroundColor))
-		.clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+		.padding(.horizontal, 16)
+		.padding(.vertical, 14)
+		.background(
+			RoundedRectangle(cornerRadius: 16, style: .continuous)
+				.fill(statusIsError ? Color.orange.opacity(0.08) : WorkspaceTheme.accentTint)
+		)
+		.overlay(
+			RoundedRectangle(cornerRadius: 16, style: .continuous)
+				.stroke(statusIsError ? Color.orange.opacity(0.18) : WorkspaceTheme.accent.opacity(0.12), lineWidth: 1)
+		)
 	}
 
-	private func startAppleSignIn() {
-		oauthService.startAppleSignIn { result in
-			Task { @MainActor in
-				switch result {
-				case .success(let account):
-					draftAccount = account
-					nickname = account.displayName
-					statusMessage = ""
-					statusIsError = false
-					step = .createNickname
-				case .failure(let error):
-					statusMessage = error.localizedDescription
-					statusIsError = true
-				}
+	private func brandPoint(icon: String, title: String, subtitle: String) -> some View {
+		HStack(alignment: .top, spacing: 12) {
+			WorkspaceIconBadge(icon: icon, accent: WorkspaceTheme.accent, size: 38)
+
+			VStack(alignment: .leading, spacing: 4) {
+				Text(title)
+					.font(.subheadline.weight(.semibold))
+					.foregroundStyle(WorkspaceTheme.strongText)
+				Text(subtitle)
+					.font(.subheadline)
+					.foregroundStyle(WorkspaceTheme.mutedText)
+					.fixedSize(horizontal: false, vertical: true)
 			}
 		}
 	}
 
-	private func sendVerificationCode() async {
-		isSendingVerificationCode = true
-		defer { isSendingVerificationCode = false }
+	private func stageStepCapsule(index: Int, title: String, isActive: Bool) -> some View {
+		HStack(spacing: 8) {
+			Text("\(index)")
+				.font(.caption.weight(.bold))
+				.frame(width: 22, height: 22)
+				.background(isActive ? Color.white.opacity(0.22) : WorkspaceTheme.accentTint)
+				.clipShape(Circle())
+			Text(title)
+				.font(.subheadline.weight(.semibold))
+		}
+		.foregroundStyle(isActive ? Color.white : Color.primary)
+		.padding(.horizontal, 12)
+		.padding(.vertical, 8)
+		.background(isActive ? WorkspaceTheme.accent : WorkspaceTheme.surface)
+		.clipShape(Capsule())
+	}
 
-		let result = await oauthService.sendEmailVerificationCode(
-			name: emailMode == .create ? nickname : "",
-			email: email,
-			purpose: emailMode.verificationPurpose,
-			announcementOptIn: emailAnnouncementOptIn
-		)
+	private func stageActionCard(
+		title: String,
+		subtitle: String,
+		icon: String,
+		accent: Color,
+		action: @escaping () -> Void
+	) -> some View {
+		HStack(spacing: 14) {
+			WorkspaceIconBadge(icon: icon, accent: accent, size: 52)
 
-		switch result {
-		case .success(let dispatch):
-			verificationExpiresAt = dispatch.expiresAt
-			verificationPreviewCode = dispatch.previewCode
-			verificationCode = ""
-			if dispatch.sentViaEmailService {
-				statusMessage = AppBrand.localized(
-					"验证码已发送到 \(dispatch.destination)。",
-					"Verification code sent to \(dispatch.destination).",
-					locale: locale
-				)
-				statusIsError = false
-			} else {
-				statusMessage = AppBrand.localized(
-					"已生成验证码，但当前仍处于开发预览模式。",
-					"A verification code was generated, but the app is still in preview delivery mode.",
-					locale: locale
-				)
-				statusIsError = false
+			VStack(alignment: .leading, spacing: 5) {
+				Text(title)
+					.font(.system(size: 20, weight: .semibold))
+					.foregroundStyle(WorkspaceTheme.strongText)
+				Text(subtitle)
+					.font(.subheadline)
+					.foregroundStyle(WorkspaceTheme.mutedText)
+					.fixedSize(horizontal: false, vertical: true)
 			}
-		case .failure(let error):
-			statusMessage = error.localizedDescription
-			statusIsError = true
+
+			Spacer(minLength: 0)
+
+			Image(systemName: "arrow.right")
+				.font(.system(size: 14, weight: .bold))
+				.foregroundStyle(accent)
+		}
+		.padding(18)
+		.background(
+			RoundedRectangle(cornerRadius: 22, style: .continuous)
+				.fill(WorkspaceTheme.elevatedSurface)
+		)
+		.overlay(
+			RoundedRectangle(cornerRadius: 22, style: .continuous)
+				.stroke(accent.opacity(0.12), lineWidth: 1)
+		)
+		.contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+		.onTapGesture(perform: action)
+	}
+
+	private func stageBackLink(_ action: @escaping () -> Void) -> some View {
+		HStack(spacing: 8) {
+			Image(systemName: "arrow.left")
+			Text(AppBrand.localized("返回", "Back", locale: locale))
+		}
+		.font(.subheadline.weight(.semibold))
+		.foregroundStyle(WorkspaceTheme.mutedText)
+		.contentShape(Rectangle())
+		.onTapGesture(perform: action)
+	}
+
+	private func profileFactRow(title: String, value: String, monospaced: Bool = false) -> some View {
+		HStack(alignment: .firstTextBaseline, spacing: 12) {
+			Text(title)
+				.font(.subheadline)
+				.foregroundStyle(.secondary)
+			Spacer(minLength: 0)
+			Text(value)
+				.font(monospaced ? .system(.body, design: .monospaced) : .body)
+				.lineLimit(1)
+				.truncationMode(.middle)
 		}
 	}
 
-	private func completeEmailVerification() {
-		let result = oauthService.completeEmailVerification(
-			email: email,
-			code: verificationCode,
-			purpose: emailMode.verificationPurpose
-		)
+	private func primaryTextAction(_ title: String, isDisabled: Bool, action: @escaping () -> Void) -> some View {
+		Text(title)
+			.font(.subheadline.weight(.semibold))
+			.foregroundStyle(isDisabled ? Color.secondary : Color.white)
+			.padding(.horizontal, 16)
+			.padding(.vertical, 11)
+			.background(
+				Capsule()
+					.fill(isDisabled ? Color.secondary.opacity(0.14) : WorkspaceTheme.accent)
+			)
+			.contentShape(Capsule())
+			.opacity(isDisabled ? 0.72 : 1)
+			.onTapGesture {
+				guard !isDisabled else { return }
+				action()
+			}
+	}
 
-		switch result {
-		case .success(let account):
-			draftAccount = account
-			nickname = emailMode == .create ? nickname : account.displayName
-			statusMessage = AppBrand.localized("邮箱验证完成。", "Email verification completed.", locale: locale)
-			statusIsError = false
-			step = .createNickname
-		case .failure(let error):
-			statusMessage = error.localizedDescription
-			statusIsError = true
-		}
+	private func secondaryTextAction(_ title: String, action: @escaping () -> Void) -> some View {
+		Text(title)
+			.font(.subheadline.weight(.semibold))
+			.foregroundStyle(WorkspaceTheme.strongText)
+			.padding(.horizontal, 16)
+			.padding(.vertical, 11)
+			.background(WorkspaceTheme.elevatedSurface)
+			.clipShape(Capsule())
+			.contentShape(Capsule())
+			.onTapGesture(perform: action)
 	}
 
 	private func startLocalAccount() {
-		let displayName = nickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-			? AppBrand.localized("本机 Profile", "Local Profile", locale: locale)
-			: nickname
+		let displayName = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
 		draftAccount = AuthenticatedAccount(
 			provider: .localOnly,
 			identifier: UUID().uuidString,
 			email: "",
 			displayName: displayName
 		)
-		if nickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-			nickname = displayName
-		}
 		statusMessage = ""
 		statusIsError = false
 		step = .createNickname
@@ -443,8 +575,166 @@ struct OnboardingView: View {
 			identifier: finalizedAccount.identifier
 		)
 		oauthService.updateStoredProfile(finalizedAccount)
+		appState.userName = finalName
+		step = .aiSetup
+	}
+
+	private func finishOnboarding() {
+		let finalName = nickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+			? appState.userName
+			: nickname.trimmingCharacters(in: .whitespacesAndNewlines)
 		appState.completeOnboarding(name: finalName)
 		step = .done
+	}
+
+	private var aiSetupStage: some View {
+		VStack(alignment: .leading, spacing: 24) {
+			WorkspaceSectionTitle(
+				eyebrow: "AI Mentor",
+				title: AppBrand.localized("是否启用 AI 助手？", "Enable the AI assistant?", locale: locale),
+				subtitle: AppBrand.localized(
+					"配置 AI API Key 后即可在仪表盘和侧边栏与 AI Mentor 对话。可以在之后的设置中单独配置。",
+					"With an AI API key configured you can chat with the mentor from the dashboard and sidebar. You can configure this later in Settings.",
+					locale: locale
+				),
+				accent: WorkspaceTheme.accent
+			)
+
+			VStack(spacing: 14) {
+				stageActionCard(
+					title: AppBrand.localized("现在配置 AI", "Configure AI now", locale: locale),
+					subtitle: AppBrand.localized(
+						"在下一步填入 API Key 与模型，立刻可用。",
+						"Enter your API key and model in the next step — ready to use immediately.",
+						locale: locale
+					),
+					icon: "sparkles",
+					accent: WorkspaceTheme.accent
+				) {
+					statusMessage = ""
+					statusIsError = false
+					aiDraftKey = AICredentialStore.readAPIKey()
+					aiDraftProvider = appState.selectedAIProvider
+					step = .aiKeyEntry
+				}
+
+				stageActionCard(
+					title: AppBrand.localized("跳过 Skip", "Skip for now", locale: locale),
+					subtitle: AppBrand.localized(
+						"先不启用，可以在设置中随时开启。",
+						"Skip for now — you can turn it on anytime in Settings.",
+						locale: locale
+					),
+					icon: "arrow.right.circle",
+					accent: WorkspaceTheme.mutedText
+				) {
+					finishOnboarding()
+				}
+			}
+
+			Text(AppBrand.localized(
+				"提示：AI Mentor 的所有功能都可以在主界面中关闭。这一选择不会影响其他模块的使用。",
+				"Note: every AI Mentor capability can be turned off later. This choice doesn't affect other modules.",
+				locale: locale
+			))
+			.font(.caption)
+			.foregroundStyle(WorkspaceTheme.mutedText)
+			.fixedSize(horizontal: false, vertical: true)
+		}
+	}
+
+	private var aiKeyEntryStage: some View {
+		VStack(alignment: .leading, spacing: 22) {
+			WorkspaceSectionTitle(
+				eyebrow: "AI Mentor",
+				title: AppBrand.localized("填入 AI API Key", "Add your AI API key", locale: locale),
+				subtitle: AppBrand.localized(
+					"Key 会保存在系统钥匙串中，可随时在设置中修改或清除。",
+					"Your key is stored in the system Keychain — you can edit or clear it anytime in Settings.",
+					locale: locale
+				),
+				accent: WorkspaceTheme.accent
+			)
+
+			VStack(alignment: .leading, spacing: 8) {
+				Text(AppBrand.localized("AI 提供方", "AI provider", locale: locale))
+					.font(.subheadline.weight(.semibold))
+					.foregroundStyle(WorkspaceTheme.mutedText)
+				Picker("", selection: $aiDraftProvider) {
+					ForEach(AIProviderOption.allCases) { option in
+						Text(providerLabel(option)).tag(option)
+					}
+				}
+				.pickerStyle(.segmented)
+				.labelsHidden()
+			}
+
+			VStack(alignment: .leading, spacing: 8) {
+				Text(AppBrand.localized("API Key", "API Key", locale: locale))
+					.font(.subheadline.weight(.semibold))
+					.foregroundStyle(WorkspaceTheme.mutedText)
+				SecureField("sk-...", text: $aiDraftKey)
+					.textFieldStyle(.roundedBorder)
+			}
+
+			HStack(spacing: 10) {
+				Button {
+					step = .aiSetup
+					statusMessage = ""
+					statusIsError = false
+				} label: {
+					Label(
+						AppBrand.localized("返回", "Back", locale: locale),
+						systemImage: "chevron.left"
+					)
+					.padding(.horizontal, 6)
+				}
+				.buttonStyle(.bordered)
+
+				Spacer()
+
+				Button {
+					finishOnboarding()
+				} label: {
+					Text(AppBrand.localized("先跳过", "Skip", locale: locale))
+						.padding(.horizontal, 6)
+				}
+				.buttonStyle(.bordered)
+
+				Button {
+					saveAIKeyAndFinish()
+				} label: {
+					Label(
+						AppBrand.localized("保存并进入", "Save & continue", locale: locale),
+						systemImage: "checkmark"
+					)
+					.padding(.horizontal, 6)
+				}
+				.buttonStyle(.borderedProminent)
+				.disabled(aiDraftKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+			}
+		}
+	}
+
+	private func saveAIKeyAndFinish() {
+		let trimmed = aiDraftKey.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !trimmed.isEmpty else {
+			statusMessage = AppBrand.localized("请填入有效的 API Key。", "Please enter a valid API key.", locale: locale)
+			statusIsError = true
+			return
+		}
+		AICredentialStore.saveAPIKey(trimmed)
+		appState.selectedAIProvider = aiDraftProvider
+		statusMessage = ""
+		statusIsError = false
+		finishOnboarding()
+	}
+
+	private func providerLabel(_ option: AIProviderOption) -> String {
+		switch option {
+		case .deepseek: return "DeepSeek"
+		case .qwen:     return AppBrand.localized("通义千问 Qwen", "Qwen", locale: locale)
+		}
 	}
 
 	private func importLocalArchive() {
@@ -484,11 +774,5 @@ struct OnboardingView: View {
 			statusMessage = error.localizedDescription
 			statusIsError = true
 		}
-	}
-
-	private func resetEmailVerificationState() {
-		verificationCode = ""
-		verificationExpiresAt = nil
-		verificationPreviewCode = nil
 	}
 }

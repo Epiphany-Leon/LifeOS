@@ -16,17 +16,19 @@ enum AppModule: String, CaseIterable, Identifiable {
 	case lifestyle  = "Lifestyle"
 	case knowledge  = "Knowledge"
 	case vitals     = "Vitals"
+	case trash      = "Trash"
 
 	var id: String { rawValue }
 
 	var icon: String {
 		switch self {
-		case .dashboard:  return "gauge.with.needle"
+		case .dashboard:  return "rectangle.grid.2x2.fill"
 		case .inbox:      return "tray.and.arrow.down"
 		case .execution:  return "target"
 		case .lifestyle:  return "cup.and.saucer"
 		case .knowledge:  return "book"
 		case .vitals:     return "sparkles"
+		case .trash:      return "trash"
 		}
 	}
 
@@ -44,6 +46,8 @@ enum AppModule: String, CaseIterable, Identifiable {
 			return AppBrand.localized("知识", "Knowledge", locale: locale)
 		case .vitals:
 			return AppBrand.localized("觉知", "Vitals", locale: locale)
+		case .trash:
+			return AppBrand.localized("回收站", "Trash", locale: locale)
 		}
 	}
 
@@ -61,8 +65,11 @@ enum AppModule: String, CaseIterable, Identifiable {
 }
 
 enum OnboardingStep {
-	case selectAuth
+	case welcome
+	case localMode
 	case createNickname
+	case aiSetup
+	case aiKeyEntry
 	case done
 }
 
@@ -165,6 +172,31 @@ enum DataSyncMode: String, CaseIterable, Identifiable, Codable {
 	}
 }
 
+enum ProfileGuidanceMode: String, CaseIterable, Identifiable, Codable {
+	case selfDirected
+	case exploratory
+
+	var id: String { rawValue }
+
+	func title(for locale: Locale) -> String {
+		switch self {
+		case .selfDirected:
+			return AppBrand.localized("我有清晰规划", "I already know my direction", locale: locale)
+		case .exploratory:
+			return AppBrand.localized("我还在探索方向", "I am still exploring", locale: locale)
+		}
+	}
+
+	func subtitle(for locale: Locale) -> String {
+		switch self {
+		case .selfDirected:
+			return AppBrand.localized("系统以执行追踪、进度拆解和复盘为主。", "The system will focus on execution tracking, goal breakdowns, and reviews.", locale: locale)
+		case .exploratory:
+			return AppBrand.localized("系统会更主动识别模式，并给出阶段性引导。", "The system will more actively identify patterns and guide your next stage.", locale: locale)
+		}
+	}
+}
+
 enum LogLevel: String, CaseIterable, Identifiable {
 	case error
 	case warning
@@ -222,6 +254,7 @@ class AppState: ObservableObject {
 		static let apiTokenStorageMode = "apiTokenStorageMode"
 		static let globalCurrency = "globalCurrency"
 		static let monthlyBudget = "monthlyBudget"
+		static let profileGuidanceMode = "profileGuidanceMode"
 		static let storageDirectory = "storageDirectory"
 		static let syncMode = "syncMode"
 		static let syncDirectory = "syncDirectory"
@@ -271,6 +304,9 @@ class AppState: ObservableObject {
 	@Published var monthlyBudget: Double {
 		didSet { UserDefaults.standard.set(monthlyBudget, forKey: Keys.monthlyBudget) }
 	}
+	@Published var profileGuidanceMode: String {
+		didSet { UserDefaults.standard.set(profileGuidanceMode, forKey: Keys.profileGuidanceMode) }
+	}
 
 	// MARK: - Preferences
 	@Published var appLanguagePreference: String {
@@ -315,7 +351,6 @@ class AppState: ObservableObject {
 
 	// MARK: - Navigation
 	@Published var selectedModule: AppModule
-	@Published var columnVisibility: NavigationSplitViewVisibility
 
 	// MARK: - Storage
 	@Published var storageDirectory: URL? {
@@ -350,6 +385,7 @@ class AppState: ObservableObject {
 	}
 
 	init() {
+		Self.clearLegacyWindowStateIfNeeded()
 		AICredentialStore.bootstrapSecurityDefaults()
 
 		self.hasCompletedOnboarding = UserDefaults.standard.bool(forKey: Keys.hasCompletedOnboarding)
@@ -359,12 +395,13 @@ class AppState: ObservableObject {
 			?? AccountProviderOption.localOnly.rawValue
 		self.accountEmail = UserDefaults.standard.string(forKey: Keys.accountEmail) ?? ""
 		self.accountIdentifier = UserDefaults.standard.string(forKey: Keys.accountIdentifier) ?? ""
-		self.apiTokenStorageMode = UserDefaults.standard.string(forKey: Keys.apiTokenStorageMode)
-			?? APITokenStorageMode.keychain.rawValue
+		self.apiTokenStorageMode = APITokenStorageMode.localFile.rawValue
 		self.globalCurrency = UserDefaults.standard.string(forKey: Keys.globalCurrency)
 			?? CurrencyCode.CNY.rawValue
 		let defaultBudget = UserDefaults.standard.double(forKey: Keys.monthlyBudget)
 		self.monthlyBudget = defaultBudget > 0 ? defaultBudget : 0
+		self.profileGuidanceMode = UserDefaults.standard.string(forKey: Keys.profileGuidanceMode)
+			?? ProfileGuidanceMode.exploratory.rawValue
 		self.appLanguagePreference = UserDefaults.standard.string(forKey: Keys.appLanguage)
 			?? AppLanguagePreference.system.rawValue
 		self.appAppearanceMode = UserDefaults.standard.string(forKey: Keys.appearanceMode)
@@ -399,7 +436,6 @@ class AppState: ObservableObject {
 
 		let bootModule = AppModule(rawValue: startupModuleRaw) ?? .dashboard
 		self.selectedModule = bootModule
-		self.columnVisibility = bootModule == .dashboard ? .detailOnly : .all
 		self.storageDirectory = nil
 		self.syncDirectory = nil
 
@@ -408,6 +444,15 @@ class AppState: ObservableObject {
 		}
 		if let path = UserDefaults.standard.string(forKey: Keys.syncDirectory) {
 			self.syncDirectory = URL(fileURLWithPath: path)
+		}
+	}
+
+	private static func clearLegacyWindowStateIfNeeded() {
+		let defaults = UserDefaults.standard
+		for key in defaults.dictionaryRepresentation().keys
+		where key.hasPrefix("NSWindow Frame SwiftUI.") ||
+			key.hasPrefix("NSSplitView Subview Frames SwiftUI.") {
+			defaults.removeObject(forKey: key)
 		}
 	}
 
@@ -436,9 +481,10 @@ class AppState: ObservableObject {
 		accountIdentifier = ""
 		authToken = nil
 
-		apiTokenStorageMode = APITokenStorageMode.keychain.rawValue
+		apiTokenStorageMode = APITokenStorageMode.localFile.rawValue
 		globalCurrency = CurrencyCode.CNY.rawValue
 		monthlyBudget = 0
+		profileGuidanceMode = ProfileGuidanceMode.exploratory.rawValue
 
 		appLanguagePreference = AppLanguagePreference.system.rawValue
 		appAppearanceMode = AppAppearanceMode.system.rawValue
@@ -454,7 +500,6 @@ class AppState: ObservableObject {
 		crashReportEnabled = true
 
 		selectedModule = .dashboard
-		columnVisibility = .detailOnly
 
 		storageDirectory = nil
 		syncMode = DataSyncMode.off.rawValue
@@ -513,7 +558,7 @@ class AppState: ObservableObject {
 	}
 
 	var selectedAPITokenStorageMode: APITokenStorageMode {
-		get { APITokenStorageMode(rawValue: apiTokenStorageMode) ?? .keychain }
+		get { .localFile }
 		set { apiTokenStorageMode = newValue.rawValue }
 	}
 
@@ -522,19 +567,19 @@ class AppState: ObservableObject {
 		set { accountProvider = newValue.rawValue }
 	}
 
+	var selectedProfileGuidanceMode: ProfileGuidanceMode {
+		get { ProfileGuidanceMode(rawValue: profileGuidanceMode) ?? .exploratory }
+		set { profileGuidanceMode = newValue.rawValue }
+	}
+
 	var selectedSyncMode: DataSyncMode {
 		get { DataSyncMode(rawValue: syncMode) ?? .off }
 		set { syncMode = newValue.rawValue }
 	}
 
 	func updateModule(_ module: AppModule) {
-		// ✅ 用 Task 替代 DispatchQueue.main.async，避免在视图更新中发布变更
-		Task { @MainActor in
-			self.selectedModule = module
-			withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-				self.columnVisibility = module == .dashboard ? .detailOnly : .all
-			}
-		}
+		guard selectedModule != module else { return }
+		selectedModule = module
 	}
 
 	func runAutoBackupIfNeeded() {

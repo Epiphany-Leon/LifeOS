@@ -19,6 +19,7 @@ private enum MarkdownEditorMode: String, CaseIterable, Identifiable {
 
 struct NoteDetailView: View {
 	@Environment(\.modelContext) private var modelContext
+	@Environment(\.locale) private var locale
 	@Binding var selectedNote: Note?
 	@Bindable var note: Note
 	@StateObject private var aiService = AIService()
@@ -29,6 +30,8 @@ struct NoteDetailView: View {
 	@State private var isImportingMarkdown = false
 	@State private var markdownImportError: String?
 	@State private var draftTagInput: String = ""
+
+	private var accent: Color { WorkspaceTheme.moduleAccent(for: .knowledge) }
 
 	private var markdownContentTypes: [UTType] {
 		var types: [UTType] = [.plainText]
@@ -41,31 +44,15 @@ struct NoteDetailView: View {
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: 22) {
-
 				headerSection
-
-				Divider()
-
 				markdownSection
-
-				Divider()
-
 				aiSection
-
-				Spacer()
-
-				Button(role: .destructive) {
-					selectedNote = nil
-					modelContext.delete(note)
-				} label: {
-					Label("删除笔记", systemImage: "trash")
-						.frame(maxWidth: .infinity)
-				}
-				.buttonStyle(.bordered)
+				deleteSection
 			}
-			.padding(28)
+			.padding(.horizontal, 28)
+			.padding(.vertical, 24)
 		}
-		.navigationTitle(note.title.isEmpty ? "笔记详情" : note.title)
+		.background(WorkspaceTheme.surface)
 		.fileImporter(
 			isPresented: $isImportingMarkdown,
 			allowedContentTypes: markdownContentTypes,
@@ -95,72 +82,84 @@ struct NoteDetailView: View {
 	}
 
 	private var headerSection: some View {
-		VStack(alignment: .leading, spacing: 14) {
-			HStack(alignment: .top, spacing: 10) {
-				TextField("标题", text: $note.title)
-					.font(.title.bold())
-					.textFieldStyle(.plain)
-					.onChange(of: note.title) { _, _ in
-						note.updatedAt = Date()
+		WorkspaceCard(accent: accent, padding: 18, cornerRadius: 22, shadowY: 8) {
+			VStack(alignment: .leading, spacing: 14) {
+				HStack(alignment: .top, spacing: 14) {
+					WorkspaceIconBadge(icon: "book", accent: accent, size: 38)
+					VStack(alignment: .leading, spacing: 4) {
+						TextField(AppBrand.localized("笔记标题", "Note title", locale: locale), text: $note.title)
+							.font(.system(size: 22, weight: .bold, design: .rounded))
+							.textFieldStyle(.plain)
+							.foregroundStyle(WorkspaceTheme.strongText)
+							.onChange(of: note.title) { _, _ in note.updatedAt = Date() }
+						HStack(spacing: 12) {
+							Label("创建 " + AppDateFormatter.ymd(note.createdAt), systemImage: "calendar.badge.plus")
+							Label("更新 " + AppDateFormatter.ymd(note.updatedAt), systemImage: "clock")
+						}
+						.font(.system(size: 11))
+						.foregroundStyle(WorkspaceTheme.mutedText)
 					}
-
-				Button {
-					createBlankNote()
-				} label: {
-					Label("新建", systemImage: "plus")
+					Spacer()
+					WorkspaceActionButton(
+						title: AppBrand.localized("新建", "New", locale: locale),
+						icon: "plus",
+						accent: accent,
+						isPrimary: true,
+						action: createBlankNote
+					)
 				}
-				.buttonStyle(.borderedProminent)
-				.controlSize(.small)
-			}
 
-			HStack(alignment: .top, spacing: 12) {
-				VStack(alignment: .leading, spacing: 8) {
-					Label("主题 Tags", systemImage: "tag")
-						.font(.caption)
-						.foregroundStyle(.secondary)
+				Divider()
+					.background(WorkspaceTheme.divider)
+
+				VStack(alignment: .leading, spacing: 10) {
+					HStack(spacing: 6) {
+						Image(systemName: "tag")
+							.font(.system(size: 11, weight: .medium))
+							.foregroundStyle(accent)
+						Text(AppBrand.localized("主题", "Topic Tags", locale: locale))
+							.font(.system(size: 12, weight: .semibold))
+							.foregroundStyle(WorkspaceTheme.mutedText)
+					}
 
 					ScrollView(.horizontal, showsIndicators: false) {
 						HStack(spacing: 6) {
 							ForEach(topicTags, id: \.self) { tag in
 								HStack(spacing: 4) {
-									Text(tag)
-										.font(.caption)
+									Text(tag).font(.caption.weight(.semibold))
 									Button {
 										removeTag(tag)
 									} label: {
 										Image(systemName: "xmark.circle.fill")
 											.font(.caption2)
-											.foregroundStyle(.secondary)
 									}
 									.buttonStyle(.plain)
 								}
-								.padding(.horizontal, 8)
-								.padding(.vertical, 4)
-								.background(Color.blue.opacity(0.1))
-								.foregroundStyle(.blue)
-								.clipShape(Capsule())
+								.foregroundStyle(accent)
+								.padding(.horizontal, 10)
+								.padding(.vertical, 5)
+								.background(Capsule().fill(accent.opacity(0.10)))
 							}
-
 							if topicTags.isEmpty {
-								Text("未分类")
+								Text(AppBrand.localized("未分类", "Uncategorized", locale: locale))
 									.font(.caption)
-									.foregroundStyle(.secondary)
-									.padding(.horizontal, 8)
-									.padding(.vertical, 4)
-									.background(Color(nsColor: .controlBackgroundColor))
-									.clipShape(Capsule())
+									.foregroundStyle(WorkspaceTheme.mutedText)
+									.padding(.horizontal, 10)
+									.padding(.vertical, 5)
+									.background(Capsule().fill(WorkspaceTheme.elevatedSurface))
 							}
 						}
 					}
 
 					HStack(spacing: 8) {
-						TextField("输入主题后回车，可添加多个（支持逗号分隔）", text: $draftTagInput)
-							.textFieldStyle(.roundedBorder)
-							.onSubmit {
-								addTagsFromInput()
-							}
+						TextField(
+							AppBrand.localized("输入主题后回车，支持逗号分隔", "Type and press return; comma to split", locale: locale),
+							text: $draftTagInput
+						)
+						.textFieldStyle(.roundedBorder)
+						.onSubmit { addTagsFromInput() }
 
-						Button("添加") {
+						Button(AppBrand.localized("添加", "Add", locale: locale)) {
 							addTagsFromInput()
 						}
 						.buttonStyle(.bordered)
@@ -168,52 +167,69 @@ struct NoteDetailView: View {
 						.disabled(draftTagInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 					}
 				}
+			}
+		}
+	}
 
-				Spacer()
-
-				VStack(alignment: .trailing, spacing: 2) {
-					Text("创建 " + note.createdAt.formatted(date: .abbreviated, time: .omitted))
-					Text("更新 " + note.updatedAt.formatted(date: .abbreviated, time: .shortened))
-				}
-				.font(.caption2)
-				.foregroundStyle(.tertiary)
+	private var deleteSection: some View {
+		HStack {
+			Spacer()
+			WorkspaceActionButton(
+				title: AppBrand.localized("删除笔记", "Delete note", locale: locale),
+				icon: "trash",
+				accent: .red,
+				isPrimary: false
+			) {
+				selectedNote = nil
+				modelContext.delete(note)
 			}
 		}
 	}
 
 	private var markdownSection: some View {
-		VStack(alignment: .leading, spacing: 12) {
-			HStack {
-				Label("正文 Markdown", systemImage: "doc.text")
-					.font(.headline)
-				Spacer()
-				Picker("编辑模式", selection: $editorMode) {
-					ForEach(MarkdownEditorMode.allCases) { mode in
-						Text(mode.rawValue).tag(mode)
+		WorkspaceCard(accent: accent, padding: 18, cornerRadius: 22, shadowY: 6) {
+			VStack(alignment: .leading, spacing: 14) {
+				HStack(alignment: .top, spacing: 12) {
+					WorkspacePanelHeader(
+						title: AppBrand.localized("正文 Markdown", "Markdown Body", locale: locale),
+						subtitle: AppBrand.localized("编辑/预览/分栏自动保存", "Edit · Preview · Split — autosaved", locale: locale),
+						accent: accent,
+						icon: "doc.text"
+					)
+					Picker("", selection: $editorMode) {
+						ForEach(MarkdownEditorMode.allCases) { mode in
+							Text(mode.rawValue).tag(mode)
+						}
 					}
+					.pickerStyle(.segmented)
+					.frame(width: 190)
+					.labelsHidden()
+					Button {
+						isImportingMarkdown = true
+					} label: {
+						Image(systemName: "tray.and.arrow.down")
+							.font(.system(size: 12, weight: .semibold))
+							.foregroundStyle(accent)
+							.frame(width: 28, height: 28)
+							.background(accent.opacity(0.10), in: Circle())
+					}
+					.buttonStyle(.plain)
+					.help(AppBrand.localized("导入 .md", "Import .md", locale: locale))
 				}
-				.pickerStyle(.segmented)
-				.frame(width: 190)
-				Button {
-					isImportingMarkdown = true
-				} label: {
-					Label("导入 .md", systemImage: "tray.and.arrow.down")
-				}
-				.buttonStyle(.bordered)
-			}
 
-			markdownToolbar
+				markdownToolbar
 
-			Group {
-				switch editorMode {
-				case .edit:
-					editorPane
-				case .preview:
-					previewPane
-				case .split:
-					HStack(spacing: 12) {
+				Group {
+					switch editorMode {
+					case .edit:
 						editorPane
+					case .preview:
 						previewPane
+					case .split:
+						HStack(spacing: 12) {
+							editorPane
+							previewPane
+						}
 					}
 				}
 			}
@@ -257,89 +273,122 @@ struct NoteDetailView: View {
 
 	private var editorPane: some View {
 		TextEditor(text: $note.content)
-			.font(.body.monospaced())
+			.font(.system(size: 13, design: .monospaced))
+			.scrollContentBackground(.hidden)
 			.frame(minHeight: 320)
-			.padding(10)
-			.background(Color(nsColor: .textBackgroundColor))
-			.clipShape(RoundedRectangle(cornerRadius: 10))
+			.padding(12)
+			.background(
+				RoundedRectangle(cornerRadius: 14, style: .continuous)
+					.fill(WorkspaceTheme.elevatedSurface)
+			)
+			.overlay(
+				RoundedRectangle(cornerRadius: 14, style: .continuous)
+					.stroke(WorkspaceTheme.border, lineWidth: 1)
+			)
 			.onChange(of: note.content) { _, _ in
 				note.updatedAt = Date()
 			}
 	}
 
-		private var previewPane: some View {
-			ScrollView {
-				Group {
-					if note.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-						Text("Markdown 预览会显示在这里")
-							.foregroundStyle(.secondary)
-							.frame(maxWidth: .infinity, alignment: .leading)
-					} else {
-						MarkdownBlockPreview(markdown: note.content)
-					}
+	private var previewPane: some View {
+		ScrollView {
+			Group {
+				if note.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+					Text(AppBrand.localized("Markdown 预览会显示在这里", "Markdown preview shows here", locale: locale))
+						.foregroundStyle(WorkspaceTheme.mutedText)
+						.frame(maxWidth: .infinity, alignment: .leading)
+				} else {
+					MarkdownBlockPreview(markdown: note.content)
 				}
-				.padding(12)
 			}
-			.frame(minHeight: 320)
-		.background(Color(nsColor: .controlBackgroundColor))
-		.clipShape(RoundedRectangle(cornerRadius: 10))
+			.padding(14)
+		}
+		.frame(minHeight: 320)
+		.background(
+			RoundedRectangle(cornerRadius: 14, style: .continuous)
+				.fill(WorkspaceTheme.subtleSurface)
+		)
+		.overlay(
+			RoundedRectangle(cornerRadius: 14, style: .continuous)
+				.stroke(WorkspaceTheme.border, lineWidth: 1)
+		)
 	}
 
 	private var aiSection: some View {
-		VStack(alignment: .leading, spacing: 12) {
-			HStack {
-				Label("AI 专题报告", systemImage: "sparkles")
-					.font(.headline)
-				Spacer()
-				Button {
-					generateAIReport()
-				} label: {
-					if isGeneratingReport {
-						ProgressView()
-							scaleEffect(0.7)
-						Text("生成中…")
-					} else {
-						Label("生成报告", systemImage: "wand.and.stars")
+		WorkspaceCard(accent: .purple, padding: 18, cornerRadius: 22, shadowY: 6) {
+			VStack(alignment: .leading, spacing: 12) {
+				HStack(alignment: .top, spacing: 12) {
+					WorkspacePanelHeader(
+						title: AppBrand.localized("AI 专题报告", "AI Insight Report", locale: locale),
+						subtitle: AppBrand.localized("基于本笔记内容生成结构化总结", "Structured summary from this note", locale: locale),
+						accent: .purple,
+						icon: "sparkles"
+					)
+					Button {
+						generateAIReport()
+					} label: {
+						HStack(spacing: 6) {
+							if isGeneratingReport {
+								ProgressView().scaleEffect(0.6)
+								Text(AppBrand.localized("生成中…", "Generating…", locale: locale))
+									.font(.caption.weight(.semibold))
+							} else {
+								Image(systemName: "wand.and.stars")
+									.font(.system(size: 11, weight: .semibold))
+								Text(AppBrand.localized("生成报告", "Generate", locale: locale))
+									.font(.caption.weight(.semibold))
+							}
+						}
+						.foregroundStyle(Color.white)
+						.padding(.horizontal, 12)
+						.padding(.vertical, 7)
+						.background(Capsule().fill(Color.purple))
 					}
+					.buttonStyle(.plain)
+					.disabled(isGeneratingReport || note.content.isEmpty)
 				}
-				.buttonStyle(.bordered)
-				.disabled(isGeneratingReport || note.content.isEmpty)
-			}
 
-			if !generatedReport.isEmpty {
-				VStack(alignment: .leading, spacing: 10) {
+				if !generatedReport.isEmpty {
 					Text(generatedReport)
-						.font(.body)
+						.font(.system(size: 13))
+						.foregroundStyle(WorkspaceTheme.strongText)
 						.padding(14)
-						.background(Color.purple.opacity(0.06))
-						.clipShape(RoundedRectangle(cornerRadius: 10))
+						.frame(maxWidth: .infinity, alignment: .leading)
+						.background(
+							RoundedRectangle(cornerRadius: 14, style: .continuous)
+								.fill(Color.purple.opacity(0.06))
+						)
+						.overlay(
+							RoundedRectangle(cornerRadius: 14, style: .continuous)
+								.stroke(Color.purple.opacity(0.18), lineWidth: 1)
+						)
 
 					HStack(spacing: 10) {
-						Button {
-							archiveReport(to: "Knowledge")
-						} label: {
-							Label("存入 Knowledge", systemImage: "book")
-						}
-						.buttonStyle(.bordered)
-						.tint(.blue)
+						WorkspaceActionButton(
+							title: AppBrand.localized("存入 Knowledge", "Save to Knowledge", locale: locale),
+							icon: "book",
+							accent: WorkspaceTheme.moduleAccent(for: .knowledge),
+							isPrimary: false
+						) { archiveReport(to: "Knowledge") }
 
-						Button {
-							archiveReport(to: "Vitals")
-						} label: {
-							Label("存入 Vitals", systemImage: "sparkles")
-						}
-						.buttonStyle(.bordered)
-						.tint(.purple)
+						WorkspaceActionButton(
+							title: AppBrand.localized("存入 Vitals", "Save to Vitals", locale: locale),
+							icon: "sparkles",
+							accent: WorkspaceTheme.moduleAccent(for: .vitals),
+							isPrimary: false
+						) { archiveReport(to: "Vitals") }
 
 						Spacer()
 
 						Button {
 							generatedReport = ""
 						} label: {
-							Image(systemName: "xmark")
+							Image(systemName: "xmark.circle.fill")
+								.font(.system(size: 14))
+								.foregroundStyle(WorkspaceTheme.mutedText)
 						}
 						.buttonStyle(.plain)
-						.foregroundStyle(.secondary)
+						.help(AppBrand.localized("关闭报告", "Dismiss", locale: locale))
 					}
 				}
 			}
@@ -456,16 +505,24 @@ private struct MarkdownSnippetButton: View {
 	var label: String
 	var action: () -> Void
 
+	@State private var isHovering = false
+
 	var body: some View {
 		Button(action: action) {
 			Text(label)
-				.font(.caption)
-				.padding(.horizontal, 8)
-				.padding(.vertical, 4)
-				.background(Color(nsColor: .controlBackgroundColor))
-				.clipShape(Capsule())
+				.font(.system(size: 11, weight: .medium))
+				.foregroundStyle(WorkspaceTheme.strongText)
+				.padding(.horizontal, 10)
+				.padding(.vertical, 5)
+				.background(
+					Capsule().fill(isHovering ? WorkspaceTheme.subtleSurface : WorkspaceTheme.elevatedSurface)
+				)
+				.overlay(
+					Capsule().stroke(WorkspaceTheme.border, lineWidth: 1)
+				)
 		}
 		.buttonStyle(.plain)
+		.onHover { isHovering = $0 }
 	}
 }
 

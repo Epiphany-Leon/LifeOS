@@ -96,7 +96,7 @@ enum AppDateFormatter {
 		let formatter = DateFormatter()
 		formatter.locale = Locale(identifier: "zh_CN_POSIX")
 		formatter.calendar = Calendar(identifier: .gregorian)
-		formatter.dateFormat = "yyyy-MM-dd"
+		formatter.dateFormat = "yyyy/MM/dd"
 		return formatter
 	}()
 

@@ -25,6 +25,7 @@ struct AppProfileSnapshot: Codable {
 	var accountIdentifier: String
 	var globalCurrency: String
 	var monthlyBudget: Double
+	var profileGuidanceMode: String
 	var appLanguagePreference: String
 	var appAppearanceMode: String
 	var startupModule: String
@@ -48,6 +49,7 @@ struct AppProfileSnapshot: Codable {
 		accountIdentifier = appState.accountIdentifier
 		globalCurrency = appState.globalCurrency
 		monthlyBudget = appState.monthlyBudget
+		profileGuidanceMode = appState.profileGuidanceMode
 		appLanguagePreference = appState.appLanguagePreference
 		appAppearanceMode = appState.appAppearanceMode
 		startupModule = appState.startupModule
@@ -72,6 +74,7 @@ struct AppProfileSnapshot: Codable {
 		appState.authToken = accountIdentifier.isEmpty ? nil : accountIdentifier
 		appState.globalCurrency = globalCurrency
 		appState.monthlyBudget = monthlyBudget
+		appState.profileGuidanceMode = profileGuidanceMode
 		appState.appLanguagePreference = appLanguagePreference
 		appState.appAppearanceMode = appAppearanceMode
 		appState.startupModule = startupModule
@@ -126,6 +129,7 @@ struct AppRecordsSnapshot: Codable {
 	var goals: [GoalSnapshot]
 	var goalMilestones: [GoalMilestoneSnapshot]
 	var goalProgressEntries: [GoalProgressEntrySnapshot]
+	var dailyReviews: [DailyReviewEntrySnapshot]
 	var vitalsEntries: [VitalsEntrySnapshot]
 	var connections: [ConnectionSnapshot]
 	var dashboardSnapshots: [DashboardSnapshotRecord]
@@ -301,6 +305,10 @@ struct GoalSnapshot: Codable {
 	var startDate: Date
 	var dueDate: Date?
 	var isCompleted: Bool
+	var template: GoalTemplateKind
+	var trackingFrequency: GoalTrackingFrequency
+	var measurement: String
+	var nextActionHint: String
 
 	init(_ goal: Goal) {
 		id = goal.id
@@ -310,6 +318,10 @@ struct GoalSnapshot: Codable {
 		startDate = goal.startDate
 		dueDate = goal.dueDate
 		isCompleted = goal.isCompleted
+		template = goal.template
+		trackingFrequency = goal.trackingFrequency
+		measurement = goal.measurement
+		nextActionHint = goal.nextActionHint
 	}
 
 	func model() -> Goal {
@@ -318,6 +330,10 @@ struct GoalSnapshot: Codable {
 		goal.progress = progress
 		goal.startDate = startDate
 		goal.isCompleted = isCompleted
+		goal.template = template
+		goal.trackingFrequency = trackingFrequency
+		goal.measurement = measurement
+		goal.nextActionHint = nextActionHint
 		return goal
 	}
 }
@@ -379,6 +395,52 @@ struct GoalProgressEntrySnapshot: Codable {
 		)
 		entry.id = id
 		return entry
+	}
+}
+
+struct DailyReviewEntrySnapshot: Codable {
+	var id: UUID
+	var day: Date
+	var wins: String
+	var challenges: String
+	var insight: String
+	var tomorrowPlan: String
+	var energyScore: Int
+	var clarityScore: Int
+	var aiSummary: String
+	var aiGuidance: String
+	var createdAt: Date
+	var updatedAt: Date
+
+	init(_ review: DailyReviewEntry) {
+		id = review.id
+		day = review.day
+		wins = review.wins
+		challenges = review.challenges
+		insight = review.insight
+		tomorrowPlan = review.tomorrowPlan
+		energyScore = review.energyScore
+		clarityScore = review.clarityScore
+		aiSummary = review.aiSummary
+		aiGuidance = review.aiGuidance
+		createdAt = review.createdAt
+		updatedAt = review.updatedAt
+	}
+
+	func model() -> DailyReviewEntry {
+		let review = DailyReviewEntry(day: day)
+		review.id = id
+		review.wins = wins
+		review.challenges = challenges
+		review.insight = insight
+		review.tomorrowPlan = tomorrowPlan
+		review.energyScore = energyScore
+		review.clarityScore = clarityScore
+		review.aiSummary = aiSummary
+		review.aiGuidance = aiGuidance
+		review.createdAt = createdAt
+		review.updatedAt = updatedAt
+		return review
 	}
 }
 
@@ -522,7 +584,7 @@ enum SyncDecision {
 @MainActor
 enum AppDataArchiveService {
 	static let archiveFileName = AppBrand.syncArchiveFileName
-	private static let archiveVersion = 1
+	private static let archiveVersion = 2
 
 	static func captureSnapshot(
 		modelContext: ModelContext,
@@ -536,6 +598,7 @@ enum AppDataArchiveService {
 		let goals = try modelContext.fetch(FetchDescriptor<Goal>())
 		let goalMilestones = try modelContext.fetch(FetchDescriptor<GoalMilestone>())
 		let goalProgressEntries = try modelContext.fetch(FetchDescriptor<GoalProgressEntry>())
+		let dailyReviews = try modelContext.fetch(FetchDescriptor<DailyReviewEntry>())
 		let vitalsEntries = try modelContext.fetch(FetchDescriptor<VitalsEntry>())
 		let connections = try modelContext.fetch(FetchDescriptor<Connection>())
 		let dashboardSnapshots = try modelContext.fetch(FetchDescriptor<DashboardSnapshot>())
@@ -548,6 +611,7 @@ enum AppDataArchiveService {
 		let goalSnapshots = goals.map(GoalSnapshot.init)
 		let milestoneSnapshots = goalMilestones.map(GoalMilestoneSnapshot.init)
 		let progressSnapshots = goalProgressEntries.map(GoalProgressEntrySnapshot.init)
+		let dailyReviewSnapshots = dailyReviews.map(DailyReviewEntrySnapshot.init)
 		let vitalsSnapshots = vitalsEntries.map(VitalsEntrySnapshot.init)
 		let connectionSnapshots = connections.map(ConnectionSnapshot.init)
 		let dashboardSnapshotRecords = dashboardSnapshots.map(DashboardSnapshotRecord.init)
@@ -561,6 +625,7 @@ enum AppDataArchiveService {
 			goals: goalSnapshots,
 			goalMilestones: milestoneSnapshots,
 			goalProgressEntries: progressSnapshots,
+			dailyReviews: dailyReviewSnapshots,
 			vitalsEntries: vitalsSnapshots,
 			connections: connectionSnapshots,
 			dashboardSnapshots: dashboardSnapshotRecords
@@ -583,6 +648,7 @@ enum AppDataArchiveService {
 			goalDates,
 			milestoneDates,
 			goalProgressEntries.map { $0.recordedAt },
+			dailyReviews.flatMap { [$0.day, $0.createdAt, $0.updatedAt] },
 			vitalsEntries.map { $0.timestamp },
 			connections.compactMap { $0.lastContactDate },
 			dashboardSnapshots.map { $0.createdAt }
@@ -650,6 +716,9 @@ enum AppDataArchiveService {
 		for snapshot in archive.data.goalProgressEntries {
 			modelContext.insert(snapshot.model())
 		}
+		for snapshot in archive.data.dailyReviews {
+			modelContext.insert(snapshot.model())
+		}
 		for snapshot in archive.data.vitalsEntries {
 			modelContext.insert(snapshot.model())
 		}
@@ -674,6 +743,7 @@ enum AppDataArchiveService {
 		try deleteAll(Goal.self, modelContext: modelContext)
 		try deleteAll(GoalMilestone.self, modelContext: modelContext)
 		try deleteAll(GoalProgressEntry.self, modelContext: modelContext)
+		try deleteAll(DailyReviewEntry.self, modelContext: modelContext)
 		try deleteAll(VitalsEntry.self, modelContext: modelContext)
 		try deleteAll(Connection.self, modelContext: modelContext)
 		try deleteAll(DashboardSnapshot.self, modelContext: modelContext)

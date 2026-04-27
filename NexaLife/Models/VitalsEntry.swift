@@ -10,6 +10,8 @@ import SwiftData
 
 enum VitalsEntryType: String, Codable, CaseIterable {
 	case coreCode   = "核心守则"
+	case reflection = "复盘/记录"
+	case emotion    = "情绪波动"
 	case treehol    = "树洞"
 	case motivation = "动力/灵感"
 }

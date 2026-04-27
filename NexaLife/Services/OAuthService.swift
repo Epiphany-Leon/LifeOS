@@ -325,6 +325,13 @@ final class OAuthService: NSObject, ObservableObject {
 		)
 	}
 
+	func resetSession() {
+		currentAccount = nil
+		authToken = nil
+		lastErrorMessage = ""
+		appleCompletion = nil
+	}
+
 	private func deliverVerificationCode(_ ticket: EmailVerificationTicket) async throws -> EmailVerificationDispatch {
 		if let config = EmailDeliveryConfiguration() {
 			var request = URLRequest(url: config.endpoint)

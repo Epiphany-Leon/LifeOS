@@ -58,6 +58,18 @@ struct ExecutionView: View {
 		}
 	}
 
+	var todoTasks: [TaskItem] {
+		filteredTasks.filter { $0.status == .todo }
+	}
+
+	var progressTasks: [TaskItem] {
+		filteredTasks.filter { $0.status == .inProgress }
+	}
+
+	var completedTasks: [TaskItem] {
+		filteredTasks.filter { $0.status == .done }
+	}
+
 	var shortTermProjects: [ExecutionProject] {
 		projects.filter { $0.horizon == .shortTerm }
 	}
@@ -66,6 +78,15 @@ struct ExecutionView: View {
 	}
 	var longTermProjects: [ExecutionProject] {
 		projects.filter { $0.horizon == .longTerm }
+	}
+	var notStartedProjects: [ExecutionProject] {
+		projects.filter { $0.status == .notStarted }
+	}
+	var inProgressProjects: [ExecutionProject] {
+		projects.filter { $0.status == .inProgress }
+	}
+	var pausedProjects: [ExecutionProject] {
+		projects.filter { $0.status == .paused }
 	}
 
 	var knownProjectNames: [String] {
@@ -77,237 +98,382 @@ struct ExecutionView: View {
 		.sorted()
 	}
 
-	var groupedTasks: [(String, [TaskItem])] {
-		let grouped = Dictionary(grouping: filteredTasks) { task in
-			let normalized = task.projectName.trimmingCharacters(in: .whitespacesAndNewlines)
-			return normalized.isEmpty ? "收件箱" : normalized
-		}
-		let sortedKeys = grouped.keys.sorted { lhs, rhs in
-			let lhsRank = projectSortRank(lhs)
-			let rhsRank = projectSortRank(rhs)
-			if lhsRank == rhsRank {
-				return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+	var body: some View {
+		VStack(spacing: 0) {
+			VStack(spacing: 0) {
+				searchBar
+				taskFilterBar
 			}
-			return lhsRank < rhsRank
+
+			boardContent
 		}
-		return sortedKeys.map { key in
-			(key, (grouped[key] ?? []).sorted(by: { $0.createdAt > $1.createdAt }))
+		.sheet(isPresented: $isAddingTask) {
+			AddTaskSheet(
+				isPresented: $isAddingTask,
+				projectNames: knownProjectNames
+			)
+		}
+		.sheet(isPresented: $isManagingProjects) {
+			ProjectManagementSheet(isPresented: $isManagingProjects)
+		}
+		.onDeleteCommand {
+			if let task = selectedTask {
+				deleteTask(task)
+			}
+		}
+		.onAppear {
+			debouncedSearchText = searchText
+		}
+		.onChange(of: searchText) { _, newValue in
+			searchDebounceTask?.cancel()
+			searchDebounceTask = Task {
+				try? await Task.sleep(nanoseconds: 180_000_000)
+				guard !Task.isCancelled else { return }
+				await MainActor.run {
+					debouncedSearchText = newValue
+				}
+			}
+		}
+		.onChange(of: tasks.map(\.id)) { _, ids in
+			if let selected = selectedTask, !ids.contains(selected.id) {
+				selectedTask = nil
+			}
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .nexaLifeExecutionCreateTask)) { _ in
+			isAddingTask = true
+		}
+		.onReceive(NotificationCenter.default.publisher(for: .nexaLifeExecutionManageProjects)) { _ in
+			isManagingProjects = true
+		}
+		.onDisappear {
+			searchDebounceTask?.cancel()
 		}
 	}
 
-	var body: some View {
-		VStack(spacing: 0) {
-			header
-
-			Divider()
-
-			searchBar
-
-			Picker("筛选", selection: $selectedFilter) {
+	private var taskFilterBar: some View {
+		ScrollView(.horizontal, showsIndicators: false) {
+			HStack(spacing: 8) {
 				ForEach(TaskFilter.allCases, id: \.self) { filter in
-					Text(filter.rawValue).tag(filter)
+					taskFilterChip(filter)
 				}
 			}
-			.pickerStyle(.segmented)
-			.padding(.horizontal, 12)
-			.padding(.bottom, 10)
-
-			projectOverviewStrip
-				.padding(.horizontal, 12)
-				.padding(.bottom, 8)
-
-			Divider()
-
-			List(selection: $selectedTask) {
-				if filteredTasks.isEmpty {
-					ContentUnavailableView(
-						searchText.isEmpty ? "没有任务" : "没有匹配结果",
-						systemImage: searchText.isEmpty ? "checkmark.circle" : "magnifyingglass",
-						description: Text(searchText.isEmpty ? "在右侧详情栏创建新任务" : "试试其他关键词或筛选项")
-					)
-				} else {
-					ForEach(groupedTasks, id: \.0) { projectName, items in
-						Section(projectName) {
-							ForEach(items) { task in
-								TaskRowView(task: task)
-									.tag(task)
-									.listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
-									.contextMenu {
-										Button("标记为待办") {
-											updateStatus(for: task, to: .todo)
-										}
-										Button("标记为进行中") {
-											updateStatus(for: task, to: .inProgress)
-										}
-										Button("标记为已完成") {
-											updateStatus(for: task, to: .done)
-										}
-										Divider()
-										Button(role: .destructive) {
-											deleteTask(task)
-										} label: {
-											Label("删除任务", systemImage: "trash")
-										}
-									}
-							}
-							.onDelete { offsets in
-								for index in offsets {
-									let target = items[index]
-									deleteTask(target)
-								}
-							}
-						}
-					}
-				}
-			}
+			.padding(.horizontal, 16)
+			.padding(.bottom, 14)
+			.padding(.top, 8)
 		}
-		.navigationTitle("执行 Execution")
-		.navigationSplitViewColumnWidth(min: ColumnWidth.min, ideal: ColumnWidth.ideal, max: ColumnWidth.max)
-			.sheet(isPresented: $isAddingTask) {
-				AddTaskSheet(
-					isPresented: $isAddingTask,
-					projectNames: knownProjectNames
-				)
-			}
-			.sheet(isPresented: $isManagingProjects) {
-				ProjectManagementSheet(isPresented: $isManagingProjects)
-			}
-			.onDeleteCommand {
-				if let task = selectedTask {
-					deleteTask(task)
-				}
-			}
-			.onAppear {
-				debouncedSearchText = searchText
-			}
-			.onChange(of: searchText) { _, newValue in
-				searchDebounceTask?.cancel()
-				searchDebounceTask = Task {
-					try? await Task.sleep(nanoseconds: 180_000_000)
-					guard !Task.isCancelled else { return }
-					await MainActor.run {
-						debouncedSearchText = newValue
-					}
-				}
-			}
-			.onChange(of: tasks.map(\.id)) { _, ids in
-				if let selected = selectedTask, !ids.contains(selected.id) {
-					selectedTask = nil
-				}
-			}
-			.onReceive(NotificationCenter.default.publisher(for: .nexaLifeExecutionCreateTask)) { _ in
-				isAddingTask = true
-			}
-			.onReceive(NotificationCenter.default.publisher(for: .nexaLifeExecutionManageProjects)) { _ in
-				isManagingProjects = true
-			}
-			.onDisappear {
-				searchDebounceTask?.cancel()
-			}
-		}
+	}
 
-	private var header: some View {
-		LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-			ExecutionMetricCard(
-				title: "待办",
-				value: "\(pendingCount)",
-				subtitle: "待推进任务",
-				color: .orange
-			)
-			ExecutionMetricCard(
-				title: "进行中",
-				value: "\(inProgressCount)",
-				subtitle: "当前执行中",
-				color: .blue
-			)
-			ExecutionMetricCard(
-				title: "已完成",
-				value: "\(doneCount)",
-				subtitle: "本阶段成果",
-				color: .green
-			)
-			ExecutionMetricCard(
-				title: "项目数",
-				value: "\(projects.count)",
-				subtitle: "短中长期总计",
-				color: .teal
-			)
-		}
-		.padding(.horizontal, 12)
-		.padding(.vertical, 10)
-		.background(Color(nsColor: .windowBackgroundColor))
+	private func isSelected(_ task: TaskItem) -> Bool {
+		selectedTask?.id == task.id
 	}
 
 	private var searchBar: some View {
 		HStack {
 			Image(systemName: "magnifyingglass")
-				.foregroundStyle(.secondary)
+				.foregroundStyle(WorkspaceTheme.mutedText)
 			TextField("搜索标题、项目、分类、标签…", text: $searchText)
 				.textFieldStyle(.plain)
 			if !searchText.isEmpty {
-				Button {
-					searchText = ""
-				} label: {
-					Image(systemName: "xmark.circle.fill")
-						.foregroundStyle(.secondary)
-				}
-				.buttonStyle(.plain)
+				Image(systemName: "xmark.circle.fill")
+					.foregroundStyle(WorkspaceTheme.mutedText)
+					.contentShape(Rectangle())
+					.onTapGesture {
+						searchText = ""
+					}
 			}
 		}
-		.padding(8)
-		.background(Color(nsColor: .controlBackgroundColor))
-		.clipShape(RoundedRectangle(cornerRadius: 8))
-		.padding(.horizontal, 12)
-		.padding(.top, 8)
-		.padding(.bottom, 10)
+		.padding(.horizontal, 14)
+		.padding(.vertical, 12)
+		.background(WorkspaceTheme.elevatedSurface)
+		.clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+		.overlay(
+			RoundedRectangle(cornerRadius: 16, style: .continuous)
+				.stroke(WorkspaceTheme.border, lineWidth: 1)
+		)
+		.padding(.horizontal, 16)
+		.padding(.top, 14)
+		.padding(.bottom, 4)
 	}
 
-	private var projectOverviewStrip: some View {
-		VStack(alignment: .leading, spacing: 10) {
-			HStack(spacing: 10) {
-				ProjectCountPill(title: "短期", count: shortTermProjects.count, color: .orange)
-				ProjectCountPill(title: "中期", count: midTermProjects.count, color: .blue)
-				ProjectCountPill(title: "长期", count: longTermProjects.count, color: .green)
+	private var boardContent: some View {
+		ScrollView {
+			VStack(alignment: .leading, spacing: 18) {
+				LazyVGrid(
+					columns: [
+						GridItem(.flexible(minimum: 220), spacing: 18),
+						GridItem(.flexible(minimum: 220), spacing: 18),
+						GridItem(.flexible(minimum: 220), spacing: 18)
+					],
+					alignment: .leading,
+					spacing: 18
+				) {
+					kanbanColumn(
+						title: "To-do",
+						subtitle: "等待推进",
+						tasks: todoTasks,
+						accent: WorkspaceTheme.moduleAccent(for: .execution),
+						status: .todo
+					)
 
-				Spacer(minLength: 8)
+					kanbanColumn(
+						title: "In Progress",
+						subtitle: "正在推进",
+						tasks: progressTasks,
+						accent: .blue,
+						status: .inProgress
+					)
 
-				Button {
-					isManagingProjects = true
-				} label: {
-					Label("项目管理", systemImage: "folder.badge.gearshape")
+					kanbanColumn(
+						title: "Done",
+						subtitle: "已完成",
+						tasks: completedTasks,
+						accent: .green,
+						status: .done
+					)
 				}
-				.buttonStyle(.bordered)
-				.controlSize(.small)
+
+				projectBoardColumn
 			}
+			.padding(.horizontal, 16)
+			.padding(.vertical, 18)
+		}
+	}
 
-			if projects.isEmpty {
-				Button("创建第一个项目") {
-					isManagingProjects = true
-				}
-				.buttonStyle(.borderless)
-				.foregroundStyle(.secondary)
-				.font(.caption)
-			} else {
-				ScrollView(.horizontal, showsIndicators: false) {
-					HStack(spacing: 8) {
-						ForEach(projects) { project in
-							HStack(spacing: 6) {
-								Text(project.horizon.rawValue)
-									.font(.caption2)
-									.foregroundStyle(.secondary)
-								Text(project.name)
-									.font(.caption)
-									.lineLimit(1)
-							}
-							.padding(.horizontal, 10)
-							.padding(.vertical, 5)
-							.background(Color(nsColor: .controlBackgroundColor))
-							.clipShape(Capsule())
-						}
+	private func kanbanColumn(
+		title: String,
+		subtitle: String,
+		tasks: [TaskItem],
+		accent: Color,
+		status: TaskStatus
+	) -> some View {
+		WorkspaceCard(accent: accent, padding: 20, cornerRadius: 24, shadowY: 8) {
+			VStack(alignment: .leading, spacing: 14) {
+				HStack(alignment: .top, spacing: 8) {
+					WorkspacePanelHeader(
+						title: title,
+						subtitle: subtitle,
+						accent: accent,
+						icon: laneIcon(for: title),
+						value: "\(tasks.count)"
+					)
+					Spacer(minLength: 0)
+					Button {
+						quickCreateTask(status: status)
+					} label: {
+						Image(systemName: "plus.circle.fill")
+							.font(.system(size: 20, weight: .semibold))
+							.foregroundStyle(accent)
 					}
-					.padding(.trailing, 4)
+					.buttonStyle(.plain)
+					.help("新建\(title)任务")
+				}
+
+				if tasks.isEmpty {
+					WorkspaceSelectableCard(accent: accent) {
+						Text(searchText.isEmpty ? "当前没有任务" : "当前筛选没有结果")
+							.font(.subheadline)
+							.foregroundStyle(WorkspaceTheme.mutedText)
+							.frame(maxWidth: .infinity, minHeight: 120, alignment: .center)
+					}
+				} else {
+					ScrollView {
+						LazyVStack(alignment: .leading, spacing: 12) {
+							ForEach(tasks) { task in
+								ExecutionBoardTaskCard(
+									task: task,
+									isSelected: isSelected(task),
+									accent: accent,
+									onSelect: { selectedTask = task },
+									onDelete: { deleteTask(task) }
+								)
+								.contextMenu {
+									Button("编辑") { selectedTask = task }
+									Menu("移动到") {
+										ForEach(TaskStatus.allCases, id: \.self) { st in
+											if st != task.status {
+												Button(st.rawValue) {
+													task.status = st
+													try? modelContext.save()
+												}
+											}
+										}
+									}
+									Divider()
+									Button("删除", role: .destructive) { deleteTask(task) }
+								}
+							}
+						}
+						.padding(.vertical, 2)
+					}
 				}
 			}
+		}
+		.frame(maxWidth: .infinity, minHeight: 320, alignment: .topLeading)
+	}
+
+	private func quickCreateTask(status: TaskStatus) {
+		let task = TaskItem(title: "新任务", status: status)
+		modelContext.insert(task)
+		try? modelContext.save()
+		selectedTask = task
+	}
+
+	private func quickCreateProject() {
+		let base = "新项目"
+		var candidate = base
+		var index = 1
+		while projects.contains(where: { $0.name == candidate }) {
+			index += 1
+			candidate = "\(base)\(index)"
+		}
+		let project = ExecutionProject(name: candidate, horizon: .shortTerm)
+		modelContext.insert(project)
+		try? modelContext.save()
+		isManagingProjects = true
+	}
+
+	private func deleteProjectInline(_ project: ExecutionProject) {
+		for task in tasks where task.projectName == project.name {
+			task.projectName = ""
+		}
+		modelContext.delete(project)
+		try? modelContext.save()
+	}
+
+	private var projectBoardColumn: some View {
+		WorkspaceCard(accent: .teal, padding: 20, cornerRadius: 24, shadowY: 8) {
+			VStack(alignment: .leading, spacing: 14) {
+				HStack(alignment: .top, spacing: 8) {
+					WorkspacePanelHeader(
+						title: "Projects",
+						subtitle: "短中长期推进视角",
+						accent: .teal,
+						icon: "folder",
+						value: "\(projects.count)"
+					)
+					Spacer(minLength: 0)
+					Button {
+						quickCreateProject()
+					} label: {
+						Image(systemName: "plus.circle.fill")
+							.font(.system(size: 20, weight: .semibold))
+							.foregroundStyle(.teal)
+					}
+					.buttonStyle(.plain)
+					.help("新建项目")
+				}
+
+				HStack(spacing: 8) {
+					ProjectCountPill(title: "短期", count: shortTermProjects.count, color: WorkspaceTheme.moduleAccent(for: .execution))
+					ProjectCountPill(title: "中期", count: midTermProjects.count, color: .blue)
+					ProjectCountPill(title: "长期", count: longTermProjects.count, color: .green)
+					ProjectCountPill(title: "未开始", count: notStartedProjects.count, color: .gray)
+					ProjectCountPill(title: "进行中", count: inProgressProjects.count, color: .indigo)
+					ProjectCountPill(title: "已暂停", count: pausedProjects.count, color: .orange)
+					Spacer(minLength: 0)
+				}
+
+				if projects.isEmpty {
+					WorkspaceSelectableCard(accent: .teal) {
+						Text("创建第一个项目")
+							.font(.subheadline)
+							.foregroundStyle(WorkspaceTheme.mutedText)
+							.frame(maxWidth: .infinity, minHeight: 120, alignment: .center)
+					}
+						.contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+						.onTapGesture {
+							isManagingProjects = true
+						}
+				} else {
+					ScrollView {
+						LazyVStack(alignment: .leading, spacing: 10) {
+							ForEach(projects) { project in
+								WorkspaceSelectableCard(accent: .teal, cornerRadius: 18, padding: 14) {
+									HStack(alignment: .center, spacing: 10) {
+										// LEFT: horizon + status tags
+										HStack(spacing: 6) {
+											projectTag(project.horizon.rawValue, color: horizonColor(project.horizon))
+											projectTag(project.status.rawValue, color: statusColor(project.status))
+										}
+										.fixedSize()
+
+										// CENTER: name + description
+										VStack(alignment: .leading, spacing: 3) {
+											Text(project.name)
+												.font(.subheadline.weight(.semibold))
+												.foregroundStyle(WorkspaceTheme.strongText)
+											Text(project.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "项目说明暂未填写" : project.detail)
+												.font(.caption)
+												.foregroundStyle(WorkspaceTheme.mutedText)
+												.lineLimit(1)
+										}
+										.frame(maxWidth: .infinity, alignment: .leading)
+
+										// RIGHT: edit + delete
+										HStack(spacing: 6) {
+											Button {
+												isManagingProjects = true
+											} label: {
+												Image(systemName: "square.and.pencil")
+													.font(.system(size: 12, weight: .semibold))
+													.foregroundStyle(.teal)
+											}
+											.buttonStyle(.plain)
+											.help("编辑")
+											Button(role: .destructive) {
+												deleteProjectInline(project)
+											} label: {
+												Image(systemName: "trash")
+													.font(.system(size: 12, weight: .semibold))
+													.foregroundStyle(.red)
+											}
+											.buttonStyle(.plain)
+											.help("删除")
+										}
+									}
+								}
+								.contextMenu {
+									Button("编辑") { isManagingProjects = true }
+									Button("删除", role: .destructive) { deleteProjectInline(project) }
+								}
+							}
+						}
+						.padding(.vertical, 2)
+					}
+				}
+			}
+		}
+		.frame(maxWidth: .infinity, minHeight: 320, alignment: .topLeading)
+	}
+
+	@ViewBuilder
+	private func projectTag(_ label: String, color: Color) -> some View {
+		Text(label)
+			.font(.caption2.weight(.semibold))
+			.foregroundStyle(color)
+			.padding(.horizontal, 7)
+			.padding(.vertical, 3)
+			.background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+			.overlay(
+				RoundedRectangle(cornerRadius: 6, style: .continuous)
+					.stroke(color.opacity(0.25), lineWidth: 0.5)
+			)
+	}
+
+	private func horizonColor(_ horizon: ProjectHorizon) -> Color {
+		switch horizon {
+		case .shortTerm: return WorkspaceTheme.moduleAccent(for: .execution)
+		case .midTerm:   return .blue
+		case .longTerm:  return .green
+		}
+	}
+
+	private func statusColor(_ status: ProjectStatus) -> Color {
+		switch status {
+		case .notStarted: return .gray
+		case .inProgress: return .indigo
+		case .finished:   return .teal
+		case .paused:     return .orange
 		}
 	}
 
@@ -318,48 +484,159 @@ struct ExecutionView: View {
 		modelContext.delete(task)
 	}
 
-	private func updateStatus(for task: TaskItem, to status: TaskStatus) {
-		task.status = status
-		task.completedAt = status == .done ? Date() : nil
+	private func taskFilterChip(_ filter: TaskFilter) -> some View {
+		let isSelected = selectedFilter == filter
+		return Text(filter.rawValue)
+			.font(.subheadline.weight(isSelected ? .semibold : .medium))
+			.foregroundStyle(isSelected ? Color.white : WorkspaceTheme.strongText)
+			.padding(.horizontal, 14)
+			.padding(.vertical, 7)
+			.background(isSelected ? WorkspaceTheme.moduleAccent(for: .execution) : WorkspaceTheme.elevatedSurface)
+			.clipShape(Capsule())
+			.contentShape(Capsule())
+			.onTapGesture {
+				selectedFilter = filter
+			}
 	}
 
-	private func projectSortRank(_ projectName: String) -> Int {
-		if projectName == "收件箱" { return 0 }
-		guard let project = projects.first(where: { $0.name == projectName }) else { return 4 }
-		switch project.horizon {
-		case .shortTerm: return 1
-		case .midTerm: return 2
-		case .longTerm: return 3
+	private func laneIcon(for title: String) -> String {
+		switch title {
+		case "To-do":
+			return "list.bullet.circle"
+		case "In Progress":
+			return "play.circle"
+		case "Done":
+			return "checkmark.circle"
+		default:
+			return "square.grid.2x2"
 		}
 	}
 }
 
-private struct ExecutionMetricCard: View {
-	let title: String
-	let value: String
-	let subtitle: String
-	let color: Color
+private struct ExecutionBoardTaskCard: View {
+	@Bindable var task: TaskItem
+	let isSelected: Bool
+	let accent: Color
+	let onSelect: () -> Void
+	let onDelete: () -> Void
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: 4) {
-			Text(title)
-				.font(.caption)
-				.foregroundStyle(.secondary)
-			Text(value)
-				.font(.system(size: 20, weight: .bold))
-				.foregroundStyle(color)
-				.lineLimit(1)
-				.minimumScaleFactor(0.7)
-			Text(subtitle)
-				.font(.caption2)
-				.foregroundStyle(.secondary)
-				.lineLimit(1)
+		WorkspaceSelectableCard(accent: accent, isSelected: isSelected, cornerRadius: 20, padding: 14) {
+			HStack(alignment: .top, spacing: 10) {
+				statusControl
+
+				VStack(alignment: .leading, spacing: 5) {
+					Text(task.title)
+						.font(.subheadline.weight(.semibold))
+						.foregroundStyle(WorkspaceTheme.strongText)
+						.lineLimit(2)
+
+					if !task.projectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+						Text(task.projectName)
+							.font(.caption)
+							.foregroundStyle(WorkspaceTheme.mutedText)
+					}
+				}
+
+				Spacer(minLength: 0)
+			}
+
+			if !task.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+				Text(task.notes)
+					.font(.caption)
+					.foregroundStyle(WorkspaceTheme.mutedText)
+					.lineLimit(3)
+			}
+
+			HStack(spacing: 8) {
+				if let due = task.dueDate {
+					WorkspaceInlineStat(
+						title: "Due",
+						value: AppDateFormatter.ymd(due),
+						accent: due < Date() && !task.isDone ? .red : accent
+					)
+				}
+
+				if !task.category.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+					WorkspaceInlineStat(title: "分类", value: task.category, accent: accent)
+				}
+
+				Spacer(minLength: 0)
+			}
 		}
-		.frame(maxWidth: .infinity, alignment: .leading)
-		.padding(.horizontal, 10)
-		.padding(.vertical, 8)
-		.background(color.opacity(0.1))
-		.clipShape(RoundedRectangle(cornerRadius: 10))
+		.contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+		.onTapGesture(perform: onSelect)
+		.contextMenu {
+			Button("标记为待办") {
+				task.status = .todo
+				task.completedAt = nil
+			}
+			Button("标记为进行中") {
+				task.status = .inProgress
+				task.completedAt = nil
+			}
+			Button("标记为已完成") {
+				task.status = .done
+				task.completedAt = Date()
+			}
+			Divider()
+			Button(role: .destructive) {
+				onDelete()
+			} label: {
+				Label("删除任务", systemImage: "trash")
+			}
+		}
+	}
+
+	private var statusControl: some View {
+		ZStack {
+			Circle()
+				.fill(accent.opacity(0.10))
+				.frame(width: 30, height: 30)
+			Image(systemName: statusIcon)
+				.font(.system(size: 13, weight: .semibold))
+				.foregroundStyle(statusColor)
+		}
+		.contentShape(Circle())
+		.onTapGesture {
+			advanceStatus()
+		}
+	}
+
+	private func advanceStatus() {
+		switch task.status {
+		case .todo:
+			task.status = .inProgress
+			task.completedAt = nil
+		case .inProgress:
+			task.status = .done
+			task.completedAt = Date()
+		case .done:
+			task.status = .todo
+			task.completedAt = nil
+		}
+	}
+
+	private var statusIcon: String {
+		switch task.status {
+		case .todo:
+			return "circle"
+		case .inProgress:
+			return "circle.dotted.circle"
+		case .done:
+			return "checkmark.circle.fill"
+		}
+	}
+
+	private var statusColor: Color {
+		switch task.status {
+		case .todo:
+			return WorkspaceTheme.moduleAccent(for: .execution)
+		case .inProgress:
+			return .blue
+		case .done:
+			return .green
+		}
 	}
 }
 
@@ -472,501 +749,5 @@ struct TaskRowView: View {
 		case .inProgress: return .blue
 		case .done: return .green
 		}
-	}
-}
-
-struct AddTaskSheet: View {
-	@Binding var isPresented: Bool
-	@Environment(\.modelContext) private var modelContext
-	@Query private var tasks: [TaskItem]
-	@Query private var projects: [ExecutionProject]
-	@StateObject private var aiService = AIService()
-	let projectNames: [String]
-
-	@State private var title: String = ""
-	@State private var notes: String = ""
-	@State private var category: String = ""
-	@State private var tagsText: String = ""
-	@State private var projectName: String = ""
-	@State private var dueDate: Date = Date()
-	@State private var hasDueDate: Bool = false
-	@State private var status: TaskStatus = .todo
-	@State private var isGeneratingSuggestion = false
-	@State private var isSaving = false
-	@State private var suggestionTask: _Concurrency.Task<Void, Never>?
-	@State private var suggestionRequestID = 0
-
-	var body: some View {
-		VStack(spacing: 20) {
-			HStack {
-				Text("新建任务").font(.title3).bold()
-				Spacer()
-				Button("取消") { isPresented = false }
-					.buttonStyle(.plain)
-					.foregroundStyle(.secondary)
-			}
-
-			Form {
-				TextField("任务标题", text: $title)
-
-				TextField("所属项目（留空则归入收件箱）", text: $projectName)
-
-				if !projectNames.isEmpty {
-					Picker("快速选择项目", selection: $projectName) {
-						Text("收件箱").tag("")
-						ForEach(projectNames, id: \.self) { name in
-							Text(name).tag(name)
-						}
-					}
-					.pickerStyle(.menu)
-				}
-
-				Button {
-					scheduleSuggestion(force: true)
-				} label: {
-					Label("自动归类项目", systemImage: "wand.and.stars")
-				}
-				.buttonStyle(.borderless)
-				.disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-				Picker("状态", selection: $status) {
-					ForEach(TaskStatus.allCases, id: \.self) { s in
-						Text(s.rawValue).tag(s)
-					}
-				}
-
-				Toggle("设置截止日期", isOn: $hasDueDate)
-				if hasDueDate {
-					DatePicker("截止日期", selection: $dueDate, displayedComponents: .date)
-						.datePickerStyle(.field)
-					Text("日期：\(AppDateFormatter.ymd(dueDate))")
-						.font(.caption2)
-						.foregroundStyle(.secondary)
-				}
-
-				TextField("备注", text: $notes, axis: .vertical)
-					.lineLimit(3...6)
-
-				TextField("分类（AI自动生成，可修改）", text: $category)
-				TextField("标签（逗号分隔，AI自动生成，可修改）", text: $tagsText)
-
-				if isGeneratingSuggestion {
-					HStack(spacing: 8) {
-						ProgressView().scaleEffect(0.7)
-						Text("AI 生成分类和标签中…")
-							.font(.caption)
-							.foregroundStyle(.secondary)
-					}
-				}
-			}
-			.formStyle(.grouped)
-
-			HStack {
-				Spacer()
-				Button("创建任务") {
-					_Concurrency.Task { await saveTask() }
-				}
-				.buttonStyle(.borderedProminent)
-				.disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
-			}
-		}
-		.padding(24)
-		.frame(width: 560, height: 520)
-		.onChange(of: title) { _, _ in
-			scheduleSuggestion(force: false)
-		}
-		.onChange(of: notes) { _, _ in
-			scheduleSuggestion(force: false)
-		}
-		.onDisappear {
-			suggestionTask?.cancel()
-		}
-	}
-
-	private var existingProjectNames: [String] {
-		Array(Set(
-			tasks.map { $0.projectName.trimmingCharacters(in: .whitespacesAndNewlines) }
-			+ projects.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
-		))
-		.filter { !$0.isEmpty }
-		.sorted()
-	}
-
-	private func parsedTags(from text: String) -> [String] {
-		let separators = CharacterSet(charactersIn: ",，;；")
-		return text
-			.components(separatedBy: separators)
-			.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-			.filter { !$0.isEmpty }
-	}
-
-	private func scheduleSuggestion(force: Bool) {
-		suggestionTask?.cancel()
-		let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-		let normalizedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-		let hasContent = !normalizedTitle.isEmpty || !normalizedNotes.isEmpty
-		guard hasContent else {
-			isGeneratingSuggestion = false
-			return
-		}
-
-		suggestionRequestID += 1
-		let requestID = suggestionRequestID
-		suggestionTask = _Concurrency.Task {
-			if !force {
-				try? await _Concurrency.Task.sleep(nanoseconds: 500_000_000)
-			}
-			guard !_Concurrency.Task.isCancelled else { return }
-			await runSuggestion(
-				title: normalizedTitle,
-				notes: normalizedNotes,
-				requestID: requestID
-			)
-		}
-	}
-
-	@MainActor
-	private func runSuggestion(title: String, notes: String, requestID: Int) async {
-		isGeneratingSuggestion = true
-		defer { isGeneratingSuggestion = false }
-		let suggestion = await aiService.suggestTaskMetadata(
-			title: title,
-			notes: notes,
-			existingProjects: existingProjectNames,
-			currentProject: projectName
-		)
-		guard requestID == suggestionRequestID else { return }
-
-		if category.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-			category = suggestion.category
-		}
-		if tagsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-			tagsText = suggestion.tags.joined(separator: ", ")
-		}
-		if projectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-		   suggestion.projectName != "收件箱" {
-			projectName = suggestion.projectName
-		}
-	}
-
-	@MainActor
-	private func saveTask() async {
-		isSaving = true
-		defer { isSaving = false }
-		let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-		let normalizedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-		let normalizedProject = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !normalizedTitle.isEmpty else { return }
-
-		let suggestion = await aiService.suggestTaskMetadata(
-			title: normalizedTitle,
-			notes: normalizedNotes,
-			existingProjects: existingProjectNames,
-			currentProject: normalizedProject
-		)
-
-		let finalCategory = category.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-			? suggestion.category
-			: category.trimmingCharacters(in: .whitespacesAndNewlines)
-		let finalTags = parsedTags(from: tagsText)
-		let finalTagsText = finalTags.isEmpty
-			? suggestion.tags.joined(separator: ", ")
-			: finalTags.joined(separator: ", ")
-		let finalProject = normalizedProject.isEmpty ? suggestion.projectName : normalizedProject
-		let savedProject = finalProject == "收件箱" ? "" : finalProject
-
-		let task = TaskItem(
-			title: normalizedTitle,
-			notes: normalizedNotes,
-			category: finalCategory,
-			tagsText: finalTagsText,
-			status: status,
-			projectName: savedProject,
-			dueDate: hasDueDate ? dueDate : nil,
-			completedAt: status == .done ? Date() : nil
-		)
-		modelContext.insert(task)
-
-		if !savedProject.isEmpty,
-		   !projects.contains(where: { $0.name == savedProject }) {
-			modelContext.insert(ExecutionProject(name: savedProject, horizon: .shortTerm))
-		}
-
-		isPresented = false
-	}
-}
-
-struct ProjectManagementSheet: View {
-	@Binding var isPresented: Bool
-	@Environment(\.modelContext) private var modelContext
-	@Query(sort: \ExecutionProject.updatedAt, order: .reverse) private var projects: [ExecutionProject]
-	@Query private var tasks: [TaskItem]
-
-	@State private var selectedProjectID: UUID?
-	@State private var isEditing = false
-	@State private var draftName = ""
-	@State private var draftDetail = ""
-	@State private var draftHorizon: ProjectHorizon = .shortTerm
-
-	var body: some View {
-		HStack(spacing: 0) {
-			projectListPanel
-				.frame(width: 280)
-				.background(Color(nsColor: .windowBackgroundColor))
-
-			Divider()
-
-			projectDetailPanel
-				.frame(maxWidth: .infinity, maxHeight: .infinity)
-				.padding(20)
-		}
-		.frame(width: 980, height: 620)
-		.onAppear {
-			if selectedProjectID == nil {
-				selectedProjectID = projects.first?.id
-			}
-			loadDraftFromSelectedProject()
-		}
-		.onChange(of: selectedProjectID) { _, _ in
-			isEditing = false
-			loadDraftFromSelectedProject()
-		}
-	}
-
-	private var projectListPanel: some View {
-		VStack(spacing: 0) {
-			HStack {
-				Text("项目 Project")
-					.font(.headline)
-				Spacer()
-				Button {
-					createProject()
-				} label: {
-					Image(systemName: "plus")
-				}
-				.buttonStyle(.borderedProminent)
-				.controlSize(.small)
-			}
-			.padding(12)
-
-			List(selection: $selectedProjectID) {
-				ForEach(ProjectHorizon.allCases, id: \.self) { horizon in
-					let items = projects.filter { $0.horizon == horizon }
-					if !items.isEmpty {
-						Section(horizon.rawValue) {
-							ForEach(items) { project in
-								Text(project.name)
-									.tag(project.id as UUID?)
-							}
-						}
-					}
-				}
-			}
-
-			HStack {
-				Button("关闭") {
-					isPresented = false
-				}
-				.buttonStyle(.bordered)
-				Spacer()
-			}
-			.padding(12)
-		}
-	}
-
-	@ViewBuilder
-	private var projectDetailPanel: some View {
-		if let project = selectedProject {
-			VStack(alignment: .leading, spacing: 18) {
-				HStack {
-					Text("项目详情")
-						.font(.title3.bold())
-					Spacer()
-					if isEditing {
-						Button("取消") {
-							isEditing = false
-							loadDraftFromSelectedProject()
-						}
-						.buttonStyle(.bordered)
-
-						Button("保存") {
-							saveProjectEdits(project)
-						}
-						.buttonStyle(.borderedProminent)
-						.disabled(draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-					} else {
-						Button("修改") {
-							isEditing = true
-						}
-						.buttonStyle(.bordered)
-					}
-				}
-
-				HStack(spacing: 10) {
-					Text("名称")
-						.frame(width: 44, alignment: .leading)
-						.foregroundStyle(.secondary)
-					if isEditing {
-						TextField("项目名称", text: $draftName)
-							.textFieldStyle(.roundedBorder)
-					} else {
-						Text(draftName)
-							.textSelection(.enabled)
-					}
-				}
-
-				HStack(spacing: 10) {
-					Text("周期")
-						.frame(width: 44, alignment: .leading)
-						.foregroundStyle(.secondary)
-					if isEditing {
-						Picker("", selection: $draftHorizon) {
-							ForEach(ProjectHorizon.allCases, id: \.self) { horizon in
-								Text(horizon.rawValue).tag(horizon)
-							}
-						}
-						.pickerStyle(.segmented)
-						.frame(maxWidth: 360)
-					} else {
-						Text(draftHorizon.rawValue)
-							.padding(.horizontal, 10)
-							.padding(.vertical, 4)
-							.background(Color.secondary.opacity(0.12))
-							.clipShape(Capsule())
-					}
-				}
-
-				VStack(alignment: .leading, spacing: 6) {
-					Text("项目说明")
-						.font(.subheadline.bold())
-					if isEditing {
-						TextEditor(text: $draftDetail)
-							.frame(minHeight: 180)
-							.padding(8)
-							.background(Color(nsColor: .textBackgroundColor))
-							.clipShape(RoundedRectangle(cornerRadius: 10))
-					} else {
-						ScrollView {
-							Text(draftDetail.isEmpty ? "暂无说明" : draftDetail)
-								.frame(maxWidth: .infinity, alignment: .leading)
-								.textSelection(.enabled)
-								.padding(8)
-						}
-						.frame(minHeight: 180)
-						.background(Color(nsColor: .textBackgroundColor))
-						.clipShape(RoundedRectangle(cornerRadius: 10))
-					}
-				}
-
-				VStack(alignment: .leading, spacing: 6) {
-					Text("关联任务")
-						.font(.subheadline.bold())
-					HStack(spacing: 8) {
-						ProjectCountPill(
-							title: "待办",
-							count: taskCount(in: project.name, status: .todo),
-							color: .orange
-						)
-						ProjectCountPill(
-							title: "进行中",
-							count: taskCount(in: project.name, status: .inProgress),
-							color: .blue
-						)
-						ProjectCountPill(
-							title: "已完成",
-							count: taskCount(in: project.name, status: .done),
-							color: .green
-						)
-					}
-				}
-
-				Spacer()
-
-				HStack {
-					Button(role: .destructive) {
-						deleteProject(project)
-					} label: {
-						Label("删除项目", systemImage: "trash")
-					}
-					.buttonStyle(.bordered)
-					Spacer()
-				}
-			}
-		} else {
-			ContentUnavailableView(
-				"选择项目查看详情",
-				systemImage: "folder",
-				description: Text("左侧可创建短期、中期、长期项目")
-			)
-		}
-	}
-
-	private var selectedProject: ExecutionProject? {
-		guard let id = selectedProjectID else { return nil }
-		return projects.first(where: { $0.id == id })
-	}
-
-	private func taskCount(in projectName: String, status: TaskStatus) -> Int {
-		tasks.filter {
-			$0.archivedMonthKey == nil &&
-			$0.projectName == projectName &&
-			$0.status == status
-		}.count
-	}
-
-	private func createProject() {
-		let base = "新项目"
-		var candidate = base
-		var index = 1
-		while projects.contains(where: { $0.name == candidate }) {
-			index += 1
-			candidate = "\(base)\(index)"
-		}
-		let project = ExecutionProject(name: candidate, horizon: .shortTerm)
-		modelContext.insert(project)
-		selectedProjectID = project.id
-		loadDraftFromSelectedProject()
-		isEditing = true
-	}
-
-	private func deleteProject(_ project: ExecutionProject) {
-		for task in tasks where task.projectName == project.name {
-			task.projectName = ""
-		}
-		modelContext.delete(project)
-		selectedProjectID = projects.first(where: { $0.id != project.id })?.id
-		loadDraftFromSelectedProject()
-		isEditing = false
-	}
-
-	private func saveProjectEdits(_ project: ExecutionProject) {
-		let trimmedName = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !trimmedName.isEmpty else { return }
-		let oldName = project.name.trimmingCharacters(in: .whitespacesAndNewlines)
-
-		project.name = trimmedName
-		project.detail = draftDetail
-		project.horizon = draftHorizon
-		project.updatedAt = Date()
-
-		if oldName != trimmedName && !oldName.isEmpty {
-			for task in tasks where task.projectName == oldName {
-				task.projectName = trimmedName
-			}
-		}
-		isEditing = false
-		loadDraftFromSelectedProject()
-	}
-
-	private func loadDraftFromSelectedProject() {
-		guard let selectedProject else {
-			draftName = ""
-			draftDetail = ""
-			draftHorizon = .shortTerm
-			return
-		}
-		draftName = selectedProject.name
-		draftDetail = selectedProject.detail
-		draftHorizon = selectedProject.horizon
 	}
 }
