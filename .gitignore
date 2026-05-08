@@ -37,12 +37,10 @@ DerivedData/
 # Local token/cache files
 ai_api_token.txt
 
-# Local release artifacts (built ZIPs and app bundles)
-release/
-# Allow Docs/release/** (screenshots and release notes tracked in repo)
-!Docs/release/
-!Docs/release/**
-!NexaLife/Docs/release/
-!NexaLife/Docs/release/v0.1.1/
-!NexaLife/Docs/release/v0.1.1/*.png
-!NexaLife/Docs/release/v0.1.1/*.md
+# Local release artifacts at repo root (built ZIPs and app bundles)
+/release/
+
+# Docs/ — only release/ and 开发日志/ are tracked; everything else is ignored
+/Docs/*
+!/Docs/release/
+!/Docs/开发日志/
